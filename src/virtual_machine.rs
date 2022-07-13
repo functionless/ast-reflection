@@ -86,10 +86,6 @@ impl VirtualMachine {
     })
   }
 
-  pub fn enter_isolation(&mut self) {
-    self.stack.push(LexicalScope::new());
-  }
-
   /**
    * Push a Scope onto the Stack.
    */
@@ -229,13 +225,6 @@ impl VirtualMachine {
       }
       _ => {}
     }
-  }
-
-  pub fn bind_var_decl(&mut self, var: &VarDecl, scope: Scope) {
-    var
-      .decls
-      .iter()
-      .for_each(|decl| self.bind_var_declarator(var.kind, decl, scope));
   }
 
   /**

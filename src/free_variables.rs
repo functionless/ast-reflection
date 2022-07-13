@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use crate::{
   closure_decorator::ClosureDecorator,
-  virtual_machine::{Names, Scope, VirtualMachine},
+  virtual_machine::{Scope, VirtualMachine},
 };
 use swc_plugin::ast::*;
 
@@ -12,11 +12,10 @@ pub enum ArrowOrFunction<'a> {
 }
 
 pub struct FreeVariableVisitor {
-  vm: VirtualMachine,
   /**
-   * A reference to the names visible outside of a closure.
+   * A VM instance for maintaining lexical scope while walking through the closure's contents.
    */
-  outer_names: Names,
+  vm: VirtualMachine,
   /**
    * A HashSet of discovered free variables.
    */
@@ -25,15 +24,9 @@ pub struct FreeVariableVisitor {
 
 impl ClosureDecorator {
   pub fn discover_free_variables(&mut self, func: ArrowOrFunction) -> HashSet<Id> {
-    // store the state of the outer block scope (names visible leading up to the declaration of this function)
-    let outer_names = self.vm.get_names(Scope::Block).clone();
-
-    // push an empty scope onto the stack - any variable we encounter that is not in the isolated scope must be a free variable
-    self.vm.enter_isolation();
-
     let mut visitor = FreeVariableVisitor {
-      vm: self.vm.clone(), // O(1) clone
-      outer_names,         // O(1) clone
+      vm: VirtualMachine::new(),
+      // outer_names, // O(1) clone
       free_variables: HashSet::new(),
     };
 
@@ -45,9 +38,6 @@ impl ClosureDecorator {
         function.visit_with(&mut visitor);
       }
     };
-
-    // restore the stack state to where it was before exploring this function
-    self.vm.exit();
 
     visitor.free_variables
   }
