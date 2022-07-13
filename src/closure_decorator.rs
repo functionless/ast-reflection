@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
-use swc_plugin::utils::quote_ident;
+use swc_plugin::utils::{prepend_stmts, quote_ident};
 
 use crate::free_variables::ArrowOrFunction;
 use crate::virtual_machine::{Scope, VirtualMachine};
@@ -24,10 +24,10 @@ impl VisitMut for ClosureDecorator {
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
-        *expr = self.wrap_arrow_expr(arrow);
+        *expr = self.register_arrow_expr(arrow);
       }
       Expr::Fn(func) => {
-        *expr = self.wrap_function(&mut func.function, func.ident.take());
+        *expr = self.register_function(&mut func.function, func.ident.take());
       }
       _ => {}
     }
@@ -35,7 +35,10 @@ impl VisitMut for ClosureDecorator {
 
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     self.vm.bind_hoisted_stmts(items, Scope::Block);
+
     items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
+
+    self.register_module_items_func_decls(items);
   }
 
   fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
@@ -46,6 +49,9 @@ impl VisitMut for ClosureDecorator {
 
     // now that all hoisted variables are in scope, walk each of the children
     block.visit_mut_children_with(self);
+
+    // hoist some ExprStmt(CallExpr)s to register function declarations defined later in the block
+    self.register_block_stmt_func_decls(&mut block.stmts);
 
     // finally, pop the stack frame
     self.vm.exit();
@@ -82,7 +88,48 @@ impl VisitMut for ClosureDecorator {
 }
 
 impl ClosureDecorator {
-  fn wrap_function(&mut self, func: &mut Function, ident: Option<Ident>) -> Expr {
+  fn register_module_items_func_decls(&mut self, items: &mut Vec<ModuleItem>) {
+    let register_stmts: Vec<ModuleItem> = items
+      .iter()
+      .filter_map(|item| match item {
+        ModuleItem::Stmt(stmt) => Some(stmt),
+        _ => None,
+      })
+      .filter_map(|stmt| self.filter_map_func_decl_to_register_call(stmt))
+      .map(|stmt| ModuleItem::Stmt(stmt))
+      .collect();
+
+    prepend_stmts(items, register_stmts.into_iter());
+  }
+
+  fn register_block_stmt_func_decls(&mut self, stmts: &mut Vec<Stmt>) {
+    let register_stmts: Vec<Stmt> = stmts
+      .iter()
+      .filter_map(|stmt| self.filter_map_func_decl_to_register_call(stmt))
+      .collect();
+
+    prepend_stmts(stmts, register_stmts.into_iter());
+  }
+
+  fn filter_map_func_decl_to_register_call(&mut self, stmt: &Stmt) -> Option<Stmt> {
+    match stmt {
+      Stmt::Decl(Decl::Fn(func)) => {
+        let free_variables =
+          self.discover_free_variables(ArrowOrFunction::Function(&func.function));
+
+        Some(Stmt::Expr(ExprStmt {
+          expr: Box::new(Expr::Call(register_closure_call(
+            Box::new(Expr::Ident(func.ident.clone())),
+            free_variables,
+          ))),
+          span: DUMMY_SP,
+        }))
+      }
+      _ => None,
+    }
+  }
+
+  fn register_function(&mut self, func: &mut Function, ident: Option<Ident>) -> Expr {
     // discover which identifiers within the closure point to free variables
     let free_variables = self.discover_free_variables(ArrowOrFunction::Function(func));
 
@@ -93,8 +140,8 @@ impl ClosureDecorator {
     // transform each of the children nodes now that we have extracted the free variables
     block.visit_mut_children_with(self);
 
-    // replace the ArrowExpr with a call to global.wrapClosure to
-    let call = Expr::Call(wrap_closure_call(
+    // wrap the Function with a call to global.__fnl_func to
+    let call = Expr::Call(register_closure_call(
       Box::new(Expr::Fn(FnExpr {
         function: func.take(),
         ident,
@@ -108,7 +155,7 @@ impl ClosureDecorator {
     call
   }
 
-  fn wrap_arrow_expr(&mut self, arrow: &mut ArrowExpr) -> Expr {
+  fn register_arrow_expr(&mut self, arrow: &mut ArrowExpr) -> Expr {
     // analyze the free variable prior to transformation
     let free_variables = self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow));
 
@@ -127,7 +174,7 @@ impl ClosureDecorator {
     }
 
     // wrap the closure in a decorator call
-    let call = Expr::Call(wrap_closure_call(
+    let call = Expr::Call(register_closure_call(
       Box::new(Expr::Arrow(arrow.take())),
       free_variables,
     ));
@@ -139,15 +186,15 @@ impl ClosureDecorator {
 }
 
 /**
- * global.wrapClosure((...args) => { ..stmts }, () => ({ ...metadata }))
+ * global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
  */
-fn wrap_closure_call(expr: Box<Expr>, free_variables: HashSet<Id>) -> CallExpr {
-  // global.wrapClosure((...args) => { ..stmts }, () => ({ ...metadata }))
+fn register_closure_call(expr: Box<Expr>, free_variables: HashSet<Id>) -> CallExpr {
+  // global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
   CallExpr {
     span: DUMMY_SP,
     callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
       obj: Box::new(Expr::Ident(quote_ident!("global"))),
-      prop: MemberProp::Ident(quote_ident!("wrapClosure")),
+      prop: MemberProp::Ident(quote_ident!("__fnl_func")),
       span: DUMMY_SP,
     }))),
     args: vec![
@@ -164,9 +211,48 @@ fn wrap_closure_call(expr: Box<Expr>, free_variables: HashSet<Id>) -> CallExpr {
               create_short_hand_prop("__filename"),
               create_prop(
                 "free",
-                create_array(free_variables.iter().map(|v| {
-                  create_object_lit(vec![create_prop("name", Expr::Ident(quote_ident!(*v.0)))])
-                })),
+                Expr::Array(ArrayLit {
+                  span: DUMMY_SP,
+                  elems: free_variables
+                    .iter()
+                    .map(|v| {
+                      Expr::Array(ArrayLit {
+                        elems: vec![
+                          Expr::Lit(Lit::Str(Str {
+                            raw: None,
+                            span: DUMMY_SP,
+                            value: v.0.clone(),
+                          })),
+                          Expr::Lit(Lit::Num(Number {
+                            span: DUMMY_SP,
+                            value: v.1.as_u32() as f64,
+                            raw: None,
+                          })),
+                          Expr::Ident(Ident {
+                            optional: false,
+                            span: DUMMY_SP,
+                            sym: v.0.clone(),
+                          }),
+                        ]
+                        .iter()
+                        .map(|expr| {
+                          Some(ExprOrSpread {
+                            spread: None,
+                            expr: Box::new(expr.clone()),
+                          })
+                        })
+                        .collect(),
+                        span: DUMMY_SP,
+                      })
+                    })
+                    .map(|expr| {
+                      Some(ExprOrSpread {
+                        spread: None,
+                        expr: Box::new(expr),
+                      })
+                    })
+                    .collect(),
+                }),
               ),
             ],
           }))),
@@ -180,13 +266,6 @@ fn wrap_closure_call(expr: Box<Expr>, free_variables: HashSet<Id>) -> CallExpr {
   }
 }
 
-fn create_object_lit(props: Vec<PropOrSpread>) -> Expr {
-  Expr::Object(ObjectLit {
-    span: DUMMY_SP,
-    props: props,
-  })
-}
-
 fn create_short_hand_prop(expr: &str) -> PropOrSpread {
   PropOrSpread::Prop(Box::new(Prop::Shorthand(quote_ident!(expr))))
 }
@@ -197,30 +276,3 @@ fn create_prop(key: &str, value: Expr) -> PropOrSpread {
     value: Box::new(value),
   })))
 }
-
-fn create_array<I>(items: I) -> Expr
-where
-  I: Iterator<Item = Expr>,
-{
-  Expr::Array(ArrayLit {
-    span: DUMMY_SP,
-    elems: items
-      .map(|v| {
-        Some(ExprOrSpread {
-          expr: Box::new(v),
-          spread: None,
-        })
-      })
-      .collect(),
-  })
-}
-
-// fn create_object_lit(key: &str, value: Expr) -> ObjectLit {
-//   ObjectLit {
-//     span: DUMMY_SP,
-//     props: vec![PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
-//       key: PropName::Ident(quote_ident!(key)),
-//       value: Box::new(value),
-//     })))],
-//   }
-// }
