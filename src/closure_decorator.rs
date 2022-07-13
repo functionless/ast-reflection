@@ -4,58 +4,21 @@ use swc_plugin::ast::*;
 use swc_plugin::utils::quote_ident;
 
 use crate::free_variables::{ArrowOrFunction, FreeVariable};
-use crate::lexical_scope::{Hoist, LexicalScope};
+use crate::lexical_scope::{Scope, Stack};
 
 pub struct ClosureDecorator {
-  /**
-   * The [lexical scope](LexicalScope) of the program at the current point of the AST.
-   */
-  pub stack: LexicalScope,
+  pub stack: Stack,
 }
 
 impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
-      stack: LexicalScope::new(),
+      stack: Stack::new(),
     }
   }
 }
 
 impl VisitMut for ClosureDecorator {
-  // Implement necessary visit_mut_* methods for actual custom transform.
-  // A comprehensive list of possible visitor methods can be found here:
-  // https://rustdoc.swc.rs/swc_ecma_visit/trait.VisitMut.html
-
-  fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-    self.stack.bind_hoisted_functions_and_vars(items);
-    items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
-  }
-
-  fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-    // we are entering a block, so push a frame onto the stack
-    self.stack.push(Hoist::Block);
-
-    self.stack.bind_hoisted_functions_and_vars(&block.stmts);
-
-    // now that all hoisted variables are in scope, walk each of the children
-    block.visit_mut_children_with(self);
-
-    // finally, pop the stack frame
-    self.stack.pop();
-  }
-
-  fn visit_mut_var_decl(&mut self, var: &mut VarDecl) {
-    for decl in var.decls.iter_mut() {
-      // bind the variable into scope
-      self.stack.bind_var_declarator(var.kind, decl);
-
-      if decl.init.is_some() {
-        // then visit the initializer with the updated lexical scope
-        decl.init.as_deref_mut().unwrap().visit_mut_with(self);
-      }
-    }
-  }
-
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
@@ -67,85 +30,41 @@ impl VisitMut for ClosureDecorator {
       _ => {}
     }
   }
-}
 
-impl ClosureDecorator {
-  fn wrap_function(&mut self, func: &mut Function, ident: Option<Ident>) -> Expr {
-    self.stack.push(Hoist::Function);
+  fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+    self.bind_stmts(items);
+    items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
+  }
 
-    func
-      .params
-      .iter_mut()
-      .for_each(|param| self.visit_param(&mut param.pat));
+  fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
+    // we are entering a block, so push a frame onto the stack
+    self.enter(Scope::Block);
 
-    let block = func.body.as_mut().unwrap();
+    self.bind_stmts(&block.stmts);
 
-    // hoist all of the function/var declarations into scope
-    self.stack.bind_hoisted_functions_and_vars(&mut block.stmts);
-
-    // process each of the children
+    // now that all hoisted variables are in scope, walk each of the children
     block.visit_mut_children_with(self);
 
-    // discover which identifiers within the closure point to free variables
-    let free_variables = self.discover_free_variables(ArrowOrFunction::Function(func), &self.stack);
-
-    // replace the ArrowExpr with a call to global.wrapClosure to decorate
-    // the closure with its free variables
-    let call = Expr::Call(wrap_closure_call(
-      Box::new(Expr::Fn(FnExpr {
-        function: func.take(),
-        ident,
-      })),
-      free_variables,
-    ));
-
-    self.stack.pop();
-
-    call
+    // finally, pop the stack frame
+    self.exit();
   }
 
-  fn wrap_arrow_expr(&mut self, arrow: &mut ArrowExpr) -> Expr {
-    // push a new frame onto the stack for the contents of this function
-    self.stack.push(Hoist::Function);
+  fn visit_mut_var_decl(&mut self, var: &mut VarDecl) {
+    for decl in var.decls.iter_mut() {
+      // bind the variable into scope
+      self.bind_var_declarator(var.kind, decl);
 
-    arrow
-      .params
-      .iter_mut()
-      .for_each(|param| self.visit_param(param));
-
-    let body = &mut arrow.body;
-    if body.is_expr() {
-      let expr = body.as_mut_expr().unwrap();
-
-      expr.visit_mut_with(self);
-    } else {
-      let block = body.as_mut_block_stmt().unwrap();
-
-      // hoist all of the function/var declarations into scope
-      self.stack.bind_hoisted_functions_and_vars(&mut block.stmts);
-
-      // process each of the children
-      block.visit_mut_children_with(self);
+      if decl.init.is_some() {
+        // then visit the initializer with the updated lexical scope
+        decl.init.as_deref_mut().unwrap().visit_mut_with(self);
+      }
     }
-
-    let free_variables =
-      self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow), &self.stack);
-
-    // replace the ArrowExpr with a call to wrapClosure, wrapping the ArrowExpr with metadata
-    let call = Expr::Call(wrap_closure_call(
-      Box::new(Expr::Arrow(arrow.take())),
-      free_variables,
-    ));
-
-    self.stack.pop();
-
-    call
   }
 
-  fn visit_param(&mut self, param: &mut Pat) {
+  fn visit_mut_pat(&mut self, param: &mut Pat) {
     // bind this argument into lexical scope
 
-    self.stack.bind_pat(param, Hoist::Block);
+    self.bind_pat(param);
     match param {
       Pat::Assign(assign) => {
         // this is a parameter with a default value
@@ -157,6 +76,71 @@ impl ClosureDecorator {
       }
       _ => {}
     }
+  }
+}
+
+impl ClosureDecorator {
+  fn wrap_function(&mut self, func: &mut Function, ident: Option<Ident>) -> Expr {
+    self.enter(Scope::Function);
+
+    let block = func.body.as_ref().unwrap();
+
+    // place the params on the scope
+    self.bind_params(&func.params);
+    // hoist all of the function/var declarations into scope
+    self.bind_stmts(&block.stmts);
+
+    // discover which identifiers within the closure point to free variables
+    let free_variables = self.discover_free_variables(ArrowOrFunction::Function(func));
+
+    // borrow the block for transformation
+    let block = func.body.as_mut().unwrap();
+
+    // transform each of the children nodes now that we have extracted the free variables
+    block.visit_mut_children_with(self);
+
+    // replace the ArrowExpr with a call to global.wrapClosure to
+    let call = Expr::Call(wrap_closure_call(
+      Box::new(Expr::Fn(FnExpr {
+        function: func.take(),
+        ident,
+      })),
+      // decorate the closure with its free variables
+      free_variables,
+    ));
+
+    self.exit();
+
+    call
+  }
+
+  fn wrap_arrow_expr(&mut self, arrow: &mut ArrowExpr) -> Expr {
+    // push a new frame onto the stack for the contents of this function
+    self.enter(Scope::Function);
+
+    // analyze the free variable prior to transformation
+    let free_variables = self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow));
+
+    // transform the closure's body
+    match &mut arrow.body {
+      BlockStmtOrExpr::Expr(expr) => {
+        expr.visit_mut_with(self);
+      }
+      BlockStmtOrExpr::BlockStmt(block) => {
+        self.bind_stmts(&block.stmts);
+        block.visit_mut_children_with(self);
+      }
+    }
+
+    // wrap the closure in a decorator call
+    let call = Expr::Call(wrap_closure_call(
+      Box::new(Expr::Arrow(arrow.take())),
+      free_variables,
+    ));
+
+    self.exit();
+
+    call
   }
 }
 

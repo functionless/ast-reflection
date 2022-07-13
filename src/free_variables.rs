@@ -1,5 +1,4 @@
-use crate::{closure_decorator::ClosureDecorator, lexical_scope::LexicalScope};
-use swc_ecma_visit::Visit;
+use crate::{closure_decorator::ClosureDecorator, lexical_scope::Scope};
 use swc_plugin::ast::*;
 
 pub enum ArrowOrFunction<'a> {
@@ -13,16 +12,31 @@ pub struct FreeVariable {
 }
 
 impl ClosureDecorator {
-  pub fn discover_free_variables(
-    &self,
-    func: ArrowOrFunction,
-    outer: &LexicalScope,
-  ) -> Vec<FreeVariable> {
+  pub fn discover_free_variables(&mut self, func: ArrowOrFunction) -> Vec<FreeVariable> {
+    // store the state of the outer function scope
+    let outer_scope = self.get_names(Scope::Block);
+
+    // push an empty scope onto the stack
+    // any variable we encounter that is not in the isolated scope must be a free variable
+    self.enter_isolation();
+
     match func {
-      ArrowOrFunction::ArrowFunction(arrow) => {}
-      ArrowOrFunction::Function(function) => {}
-    }
+      ArrowOrFunction::ArrowFunction(arrow) => {
+        self.bind_pats(&arrow.params);
+      }
+      ArrowOrFunction::Function(function) => {
+        self.bind_params(&function.params);
+      }
+    };
+
+    // restore the stack state to where it was before exploring this function
+    self.exit();
 
     Vec::new()
   }
+}
+
+// read-only visitor that will discover free variables
+impl Visit for ClosureDecorator {
+  // TODO
 }

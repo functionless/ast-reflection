@@ -1,13 +1,15 @@
 use im::HashMap;
 use swc_plugin::{ast::*, utils::StmtLike};
 
+use crate::closure_decorator::ClosureDecorator;
+
 /**
  * A mapping of [reference name](JsWord) to the [unique id](u32) of that reference.
  */
-type Names = HashMap<JsWord, u32>;
+pub type Names = HashMap<JsWord, u32>;
 
 #[derive(Clone)]
-pub struct Scope {
+pub struct LexicalScope {
   /**
    * Variables visible at this point in the tree.
    */
@@ -33,19 +35,19 @@ pub struct Scope {
   function: Names,
 }
 
-impl Scope {
-  fn new() -> Scope {
-    Scope {
+impl LexicalScope {
+  fn new() -> LexicalScope {
+    LexicalScope {
       block: Names::new(),
       function: Names::new(),
     }
   }
 }
 
-type Stack = Vec<Scope>;
+pub type Stack = Vec<LexicalScope>;
 
 #[derive(Eq, PartialEq, Clone, Copy)]
-pub enum Hoist {
+pub enum Scope {
   /**
    * Functions can see all of names in their parent scopes.
    */
@@ -56,100 +58,91 @@ pub enum Hoist {
   Block,
 }
 
-pub struct LexicalScope {
-  stack: Stack,
-}
-
-impl LexicalScope {
-  pub fn new() -> Self {
-    LexicalScope {
-      stack: vec![Scope::new()],
-    }
-  }
-
-  pub fn lookup(&self, name: &JsWord, hoist: Hoist) -> Option<u32> {
-    self.stack.last().and_then(|scope| {
-      (if hoist == Hoist::Block {
-        &scope.block
+impl ClosureDecorator {
+  pub fn lookup(&self, name: &JsWord, scope: Scope) -> Option<u32> {
+    self.stack.last().and_then(|lex| {
+      (if scope == Scope::Block {
+        &lex.block
       } else {
-        &scope.function
+        &lex.function
       })
       .get(name)
       .map(|u| *u)
     })
   }
 
+  pub fn enter_isolation(&mut self) {
+    self.stack.push(LexicalScope::new());
+  }
+
   /**
    * Push a Scope onto the Stack.
    */
-  pub fn push(&mut self, hoist: Hoist) {
-    let scope = match self.stack.last() {
-      Some(parent) => {
-        match hoist {
-          // entering function scope
-          // e.g. function foo() { (function scope) }
-          Hoist::Function => Scope {
-            // all variables from the parent's function scope are inherited
-            block: parent.function.clone(),
-            function: parent.function.clone(),
-          },
-          Hoist::Block => Scope {
-            // cloning immutable hash maps is O(1)
-            // data sharing of immutable should also be memory efficient O(n lg n)
-            function: parent.function.clone(),
-            block: parent.block.clone(),
-          },
-        }
-      }
-      None => Scope::new(),
-    };
-    self.stack.push(scope);
+  pub fn enter(&mut self, scope: Scope) {
+    self.stack.push(match self.stack.last() {
+      Some(parent) => match scope {
+        // entering function scope
+        // e.g. function foo() { (function scope) }
+        Scope::Function => LexicalScope {
+          // all variables from the parent's function scope are inherited
+          block: parent.function.clone(),
+          function: parent.function.clone(),
+        },
+        Scope::Block => LexicalScope {
+          // cloning immutable hash maps is fast - O(1)
+          // data sharing of immutable data structures should also be memory efficient - O(lg n)
+          function: parent.function.clone(),
+          block: parent.block.clone(),
+        },
+      },
+      None => LexicalScope::new(),
+    });
   }
 
-  pub fn pop(&mut self) -> Scope {
+  pub fn exit(&mut self) -> LexicalScope {
     match self.stack.pop() {
       Some(popped) => popped,
       None => panic!("stack underflow"),
     }
   }
 
-  pub fn get_names(&self, hoist: Hoist) -> &Names {
+  pub fn get_names(&self, scope: Scope) -> &Names {
     match self.stack.last() {
-      Some(popped) => match hoist {
-        Hoist::Block => &popped.block,
-        Hoist::Function => &popped.function,
+      Some(popped) => match scope {
+        Scope::Block => &popped.block,
+        Scope::Function => &popped.function,
       },
       None => panic!("stack underflow"),
     }
   }
 
-  pub fn get_names_mut(&mut self, hoist: Hoist) -> &mut Names {
+  pub fn get_names_mut(&mut self, scope: Scope) -> &mut Names {
     match self.stack.last_mut() {
-      Some(popped) => match hoist {
-        Hoist::Block => &mut popped.block,
-        Hoist::Function => &mut popped.function,
+      Some(popped) => match scope {
+        Scope::Block => &mut popped.block,
+        Scope::Function => &mut popped.function,
       },
       None => panic!("stack underflow"),
     }
   }
 
-  pub fn update_name(&mut self, name: JsWord, id: u32, hoist: Hoist) {
-    let names = self.get_names_mut(hoist);
+  pub fn update_name(&mut self, name: JsWord, id: u32, scope: Scope) {
+    let names = self.get_names_mut(scope);
     *names = names.update(name, id);
   }
 
   /**
    * Binds the name of an [ident](Ident) to the current [lexical scope](LexicalScope).
    */
-  pub fn bind_ident(&mut self, ident: &Ident, hoist: Hoist) {
+  pub fn bind_ident(&mut self, ident: &Ident, scope: Scope) {
     let id = self.get_unique_id(&ident);
 
-    if hoist == Hoist::Block {
+    if scope == Scope::Block {
       // block identifiers only come into scope when they are evaluated
-      self.update_name(ident.sym.clone(), id, Hoist::Block);
+      self.update_name(ident.sym.clone(), id, Scope::Block);
     }
     // all names are visible in the Function scope
-    self.update_name(ident.sym.clone(), id, Hoist::Function);
+    self.update_name(ident.sym.clone(), id, Scope::Function);
   }
 
   /**
@@ -159,6 +152,14 @@ impl LexicalScope {
    */
   pub fn get_unique_id(&mut self, ident: &Ident) -> u32 {
     ident.to_id().1.to_owned().as_u32()
+  }
+
+  pub fn bind_params(&mut self, params: &[Param]) {
+    params.iter().for_each(|param| self.bind_pat(&param.pat));
+  }
+
+  pub fn bind_pats(&mut self, pats: &[Pat]) {
+    pats.iter().for_each(|p| self.bind_pat(p));
   }
 
   /**
@@ -172,21 +173,21 @@ impl LexicalScope {
    * [d];
    * ```
    */
-  pub fn bind_pat(&mut self, pat: &Pat, hoist: Hoist) {
+  pub fn bind_pat(&mut self, pat: &Pat) {
     match pat {
       // (a, b) => {}
       Pat::Ident(ident) => {
-        self.bind_ident(&ident.id, hoist);
+        self.bind_ident(&ident.id, Scope::Block);
       }
       // ({a, b: c}) => {}
       Pat::Object(o) => {
         for prop in o.props.iter() {
           match prop {
             ObjectPatProp::Assign(a) => {
-              self.bind_ident(&a.key, hoist);
+              self.bind_ident(&a.key, Scope::Block);
             }
             ObjectPatProp::KeyValue(kv) => {
-              self.bind_pat(kv.value.as_ref(), hoist);
+              self.bind_pat(kv.value.as_ref());
             }
             _ => {}
           }
@@ -196,43 +197,16 @@ impl LexicalScope {
       Pat::Array(a) => {
         for element in a.elems.iter() {
           if element.is_some() {
-            self.bind_pat(element.as_ref().unwrap(), hoist);
+            self.bind_pat(element.as_ref().unwrap());
           }
         }
       }
       // (a = value) => {}
       Pat::Assign(assign) => {
         // bind the variable onto the scope
-        self.bind_pat(assign.left.as_ref(), hoist);
+        self.bind_pat(assign.left.as_ref());
       }
       _ => {}
-    }
-  }
-
-  /**
-   * Bind names produced by a [VarDeclarator](VarDeclarator)
-   */
-  pub fn bind_var_declarator(&mut self, kind: VarDeclKind, decl: &VarDeclarator) {
-    match decl.init.as_deref() {
-      None if kind == VarDeclKind::Var => {
-        // hoisted var - we should ignore as it has already been hoisted at the beginning of the block
-        // var x;
-        self.bind_pat(&decl.name, Hoist::Function);
-      }
-      Some(_) => {
-        // var x = v;
-        // let x = b;
-        // const x = v;
-
-        // bind the names to the current lexical scope
-        self.bind_pat(&decl.name, Hoist::Block);
-      }
-      None => {
-        // let x;
-
-        // bind the names to the current lexical scope
-        self.bind_pat(&decl.name, Hoist::Block);
-      }
     }
   }
 
@@ -243,10 +217,30 @@ impl LexicalScope {
       .for_each(|decl| self.bind_var_declarator(var.kind, decl));
   }
 
-  pub fn bind_function_params(&mut self, params: &Vec<Pat>) {
-    params
-      .iter()
-      .for_each(|param| self.bind_pat(param, Hoist::Block));
+  /**
+   * Bind names produced by a [VarDeclarator](VarDeclarator)
+   */
+  pub fn bind_var_declarator(&mut self, kind: VarDeclKind, decl: &VarDeclarator) {
+    match decl.init.as_deref() {
+      None if kind == VarDeclKind::Var => {
+        // var x;
+        self.bind_pat(&decl.name);
+      }
+      Some(_) => {
+        // var x = v;
+        // let x = b;
+        // const x = v;
+
+        // bind the names to the current lexical scope
+        self.bind_pat(&decl.name);
+      }
+      None => {
+        // let x;
+
+        // bind the names to the current lexical scope
+        self.bind_pat(&decl.name);
+      }
+    }
   }
 
   /**
@@ -263,11 +257,11 @@ impl LexicalScope {
    * var foo;
    * ```
    */
-  pub fn bind_hoisted_functions_and_vars<T>(&mut self, block: &[T])
+  pub fn bind_stmts<T>(&mut self, stmts: &[T])
   where
     T: StmtLike,
   {
-    block.iter().for_each(|stmt| {
+    stmts.iter().for_each(|stmt| {
       // hoist all of the function and var declarations in the module into scope
       match stmt.as_stmt() {
         Some(stmt) => {
@@ -280,7 +274,8 @@ impl LexicalScope {
               });
             }
             Stmt::Decl(Decl::Fn(func)) => {
-              self.bind_ident(&func.ident, Hoist::Function);
+              // function declarations should be hoisted to the Block scope
+              self.bind_ident(&func.ident, Scope::Block);
             }
             _ => {}
           }
