@@ -1,12 +1,12 @@
 let i = 0;
 
-const a = global.wrapClosure(
-  () => { },
-  () => ({
-    __filename,
-    free: [{
-      name: "i",
-      
-    }]
-  })
-);
+const a = global.wrapClosure(()=>{
+    i;
+}, ()=>({
+        __filename,
+        free: [
+            {
+                name: i
+            }
+        ]
+    }));

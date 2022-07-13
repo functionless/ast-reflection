@@ -9,7 +9,7 @@ use swc_plugin::{ast::*, plugin_transform, TransformPluginProgramMetadata};
 
 mod closure_decorator;
 mod free_variables;
-mod lexical_scope;
+mod virtual_machine;
 
 #[plugin_transform]
 pub fn wrap_closures(mut program: Program, _metadata: TransformPluginProgramMetadata) -> Program {

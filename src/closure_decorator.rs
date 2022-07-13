@@ -1,19 +1,21 @@
+use std::collections::HashSet;
+
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::quote_ident;
 
-use crate::free_variables::{ArrowOrFunction, FreeVariable};
-use crate::lexical_scope::{Scope, Stack};
+use crate::free_variables::ArrowOrFunction;
+use crate::virtual_machine::{Scope, VirtualMachine};
 
 pub struct ClosureDecorator {
-  pub stack: Stack,
+  pub vm: VirtualMachine,
 }
 
 impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
-      stack: Stack::new(),
+      vm: VirtualMachine::new(),
     }
   }
 }
@@ -32,27 +34,27 @@ impl VisitMut for ClosureDecorator {
   }
 
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-    self.bind_stmts(items);
+    self.vm.bind_hoisted_stmts(items, Scope::Block);
     items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
   }
 
   fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
     // we are entering a block, so push a frame onto the stack
-    self.enter(Scope::Block);
+    self.vm.enter(Scope::Block);
 
-    self.bind_stmts(&block.stmts);
+    self.vm.bind_hoisted_stmts(&block.stmts, Scope::Block);
 
     // now that all hoisted variables are in scope, walk each of the children
     block.visit_mut_children_with(self);
 
     // finally, pop the stack frame
-    self.exit();
+    self.vm.exit();
   }
 
   fn visit_mut_var_decl(&mut self, var: &mut VarDecl) {
     for decl in var.decls.iter_mut() {
       // bind the variable into scope
-      self.bind_var_declarator(var.kind, decl);
+      self.vm.bind_var_declarator(var.kind, decl, Scope::Block);
 
       if decl.init.is_some() {
         // then visit the initializer with the updated lexical scope
@@ -64,7 +66,7 @@ impl VisitMut for ClosureDecorator {
   fn visit_mut_pat(&mut self, param: &mut Pat) {
     // bind this argument into lexical scope
 
-    self.bind_pat(param);
+    self.vm.bind_pat(param, Scope::Block);
     match param {
       Pat::Assign(assign) => {
         // this is a parameter with a default value
@@ -84,7 +86,7 @@ impl ClosureDecorator {
     // discover which identifiers within the closure point to free variables
     let free_variables = self.discover_free_variables(ArrowOrFunction::Function(func));
 
-    self.enter(Scope::Function);
+    self.vm.enter(Scope::Function);
 
     let block = func.body.as_mut().unwrap();
 
@@ -101,7 +103,7 @@ impl ClosureDecorator {
       free_variables,
     ));
 
-    self.exit();
+    self.vm.exit();
 
     call
   }
@@ -111,7 +113,7 @@ impl ClosureDecorator {
     let free_variables = self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow));
 
     // push a new frame onto the stack for the contents of this function
-    self.enter(Scope::Function);
+    self.vm.enter(Scope::Function);
 
     // transform the closure's body
     match &mut arrow.body {
@@ -119,7 +121,7 @@ impl ClosureDecorator {
         expr.visit_mut_with(self);
       }
       BlockStmtOrExpr::BlockStmt(block) => {
-        self.bind_stmts(&block.stmts);
+        self.vm.bind_hoisted_stmts(&block.stmts, Scope::Block);
         block.visit_mut_children_with(self);
       }
     }
@@ -130,7 +132,7 @@ impl ClosureDecorator {
       free_variables,
     ));
 
-    self.exit();
+    self.vm.exit();
 
     call
   }
@@ -139,7 +141,7 @@ impl ClosureDecorator {
 /**
  * global.wrapClosure((...args) => { ..stmts }, () => ({ ...metadata }))
  */
-fn wrap_closure_call(expr: Box<Expr>, free_variables: Vec<FreeVariable>) -> CallExpr {
+fn wrap_closure_call(expr: Box<Expr>, free_variables: HashSet<Id>) -> CallExpr {
   // global.wrapClosure((...args) => { ..stmts }, () => ({ ...metadata }))
   CallExpr {
     span: DUMMY_SP,
@@ -163,10 +165,7 @@ fn wrap_closure_call(expr: Box<Expr>, free_variables: Vec<FreeVariable>) -> Call
               create_prop(
                 "free",
                 create_array(free_variables.iter().map(|v| {
-                  create_object_lit(vec![create_prop(
-                    "name",
-                    Expr::Ident(quote_ident!(*v.name)),
-                  )])
+                  create_object_lit(vec![create_prop("name", Expr::Ident(quote_ident!(*v.0)))])
                 })),
               ),
             ],
