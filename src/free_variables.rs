@@ -1,4 +1,4 @@
-use crate::{lexical_scope::LexicalScope, wrap_closure::WrapClosure};
+use crate::{closure_decorator::ClosureDecorator, lexical_scope::LexicalScope};
 use swc_ecma_visit::Visit;
 use swc_plugin::ast::*;
 
@@ -12,23 +12,17 @@ pub struct FreeVariable {
   pub id: u32,
 }
 
-pub fn discover_free_variables(func: ArrowOrFunction, outer: &LexicalScope) -> Vec<FreeVariable> {
-  let mut scanner = FreeVariableScanner {
-    outer,
-    inner: LexicalScope::new(),
-  };
+impl ClosureDecorator {
+  pub fn discover_free_variables(
+    &self,
+    func: ArrowOrFunction,
+    outer: &LexicalScope,
+  ) -> Vec<FreeVariable> {
+    match func {
+      ArrowOrFunction::ArrowFunction(arrow) => {}
+      ArrowOrFunction::Function(function) => {}
+    }
 
-  match func {
-    ArrowOrFunction::ArrowFunction(arrow) => arrow.visit_with(&mut scanner),
-    ArrowOrFunction::Function(function) => function.visit_with(&mut scanner),
+    Vec::new()
   }
-
-  Vec::new()
 }
-
-pub struct FreeVariableScanner<'a> {
-  outer: &'a LexicalScope,
-  inner: LexicalScope,
-}
-
-impl Visit for FreeVariableScanner<'_> {}

@@ -61,28 +61,22 @@ pub struct LexicalScope {
 }
 
 impl LexicalScope {
-  fn load_hoisted_lexical_scope(&mut self, stmts: &Vec<BlockStmt>) {}
-}
-
-impl LexicalScope {
   pub fn new() -> Self {
     LexicalScope {
       stack: vec![Scope::new()],
     }
   }
 
-  pub fn lookup_local(&self, name: &JsWord) -> Option<u32> {
-    self
-      .stack
-      .last()
-      .and_then(|scope| scope.block.get(name).map(|u| *u))
-  }
-
-  pub fn lookup_hoisted(&self, name: &JsWord) -> Option<u32> {
-    self
-      .stack
-      .last()
-      .and_then(|frame| frame.function.get(name).map(|u| *u))
+  pub fn lookup(&self, name: &JsWord, hoist: Hoist) -> Option<u32> {
+    self.stack.last().and_then(|scope| {
+      (if hoist == Hoist::Block {
+        &scope.block
+      } else {
+        &scope.function
+      })
+      .get(name)
+      .map(|u| *u)
+    })
   }
 
   /**
@@ -91,16 +85,18 @@ impl LexicalScope {
   pub fn push(&mut self, hoist: Hoist) {
     let scope = match self.stack.last() {
       Some(parent) => {
-        // it is safe to re-use frame.function because HashMap is immutable
-        let inherit = parent.block.clone().union(parent.function.clone());
         match hoist {
+          // entering function scope
+          // e.g. function foo() { (function scope) }
           Hoist::Function => Scope {
-            // cloning is cheap O(1), so take advantage of it
-            block: inherit.clone(),
-            function: inherit.clone(),
+            // all variables from the parent's function scope are inherited
+            block: parent.function.clone(),
+            function: parent.function.clone(),
           },
           Hoist::Block => Scope {
-            function: inherit.clone(),
+            // cloning immutable hash maps is O(1)
+            // data sharing of immutable should also be memory efficient O(n lg n)
+            function: parent.function.clone(),
             block: parent.block.clone(),
           },
         }
@@ -137,18 +133,23 @@ impl LexicalScope {
     }
   }
 
+  pub fn update_name(&mut self, name: JsWord, id: u32, hoist: Hoist) {
+    let names = self.get_names_mut(hoist);
+    *names = names.update(name, id);
+  }
+
   /**
    * Binds the name of an [ident](Ident) to the current [lexical scope](LexicalScope).
    */
   pub fn bind_ident(&mut self, ident: &Ident, hoist: Hoist) {
     let id = self.get_unique_id(&ident);
 
-    if hoist == Hoist::Function {
-      let block = self.get_names_mut(Hoist::Block);
-      *block = block.update(ident.sym.clone(), id);
+    if hoist == Hoist::Block {
+      // block identifiers only come into scope when they are evaluated
+      self.update_name(ident.sym.clone(), id, Hoist::Block);
     }
-    let names = self.get_names_mut(hoist);
-    *names = names.update(ident.sym.clone(), id);
+    // all names are visible in the Function scope
+    self.update_name(ident.sym.clone(), id, Hoist::Function);
   }
 
   /**
@@ -208,13 +209,6 @@ impl LexicalScope {
     }
   }
 
-  pub fn bind_var_decl(&mut self, var: &VarDecl) {
-    var
-      .decls
-      .iter()
-      .for_each(|decl| self.bind_var_declarator(var.kind, decl));
-  }
-
   /**
    * Bind names produced by a [VarDeclarator](VarDeclarator)
    */
@@ -242,6 +236,13 @@ impl LexicalScope {
     }
   }
 
+  pub fn bind_var_decl(&mut self, var: &VarDecl) {
+    var
+      .decls
+      .iter()
+      .for_each(|decl| self.bind_var_declarator(var.kind, decl));
+  }
+
   pub fn bind_function_params(&mut self, params: &Vec<Pat>) {
     params
       .iter()
@@ -262,7 +263,7 @@ impl LexicalScope {
    * var foo;
    * ```
    */
-  pub fn bind_hoisted_stmts_in_block<T>(&mut self, block: &[T])
+  pub fn bind_hoisted_functions_and_vars<T>(&mut self, block: &[T])
   where
     T: StmtLike,
   {

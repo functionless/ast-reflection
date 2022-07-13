@@ -3,31 +3,31 @@ use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::quote_ident;
 
-use crate::free_variables::{discover_free_variables, ArrowOrFunction, FreeVariable};
+use crate::free_variables::{ArrowOrFunction, FreeVariable};
 use crate::lexical_scope::{Hoist, LexicalScope};
 
-pub struct WrapClosure {
+pub struct ClosureDecorator {
   /**
    * The [lexical scope](LexicalScope) of the program at the current point of the AST.
    */
   pub stack: LexicalScope,
 }
 
-impl WrapClosure {
-  pub fn new() -> WrapClosure {
-    WrapClosure {
+impl ClosureDecorator {
+  pub fn new() -> ClosureDecorator {
+    ClosureDecorator {
       stack: LexicalScope::new(),
     }
   }
 }
 
-impl VisitMut for WrapClosure {
+impl VisitMut for ClosureDecorator {
   // Implement necessary visit_mut_* methods for actual custom transform.
   // A comprehensive list of possible visitor methods can be found here:
   // https://rustdoc.swc.rs/swc_ecma_visit/trait.VisitMut.html
 
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-    self.stack.bind_hoisted_stmts_in_block(items);
+    self.stack.bind_hoisted_functions_and_vars(items);
     items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
   }
 
@@ -35,7 +35,7 @@ impl VisitMut for WrapClosure {
     // we are entering a block, so push a frame onto the stack
     self.stack.push(Hoist::Block);
 
-    self.stack.bind_hoisted_stmts_in_block(&block.stmts);
+    self.stack.bind_hoisted_functions_and_vars(&block.stmts);
 
     // now that all hoisted variables are in scope, walk each of the children
     block.visit_mut_children_with(self);
@@ -68,7 +68,8 @@ impl VisitMut for WrapClosure {
     }
   }
 }
-impl WrapClosure {
+
+impl ClosureDecorator {
   fn wrap_function(&mut self, func: &mut Function, ident: Option<Ident>) -> Expr {
     self.stack.push(Hoist::Function);
 
@@ -80,13 +81,13 @@ impl WrapClosure {
     let block = func.body.as_mut().unwrap();
 
     // hoist all of the function/var declarations into scope
-    self.stack.bind_hoisted_stmts_in_block(&mut block.stmts);
+    self.stack.bind_hoisted_functions_and_vars(&mut block.stmts);
 
     // process each of the children
     block.visit_mut_children_with(self);
 
     // discover which identifiers within the closure point to free variables
-    let free_variables = discover_free_variables(ArrowOrFunction::Function(func), &self.stack);
+    let free_variables = self.discover_free_variables(ArrowOrFunction::Function(func), &self.stack);
 
     // replace the ArrowExpr with a call to global.wrapClosure to decorate
     // the closure with its free variables
@@ -121,14 +122,14 @@ impl WrapClosure {
       let block = body.as_mut_block_stmt().unwrap();
 
       // hoist all of the function/var declarations into scope
-      self.stack.bind_hoisted_stmts_in_block(&mut block.stmts);
+      self.stack.bind_hoisted_functions_and_vars(&mut block.stmts);
 
       // process each of the children
       block.visit_mut_children_with(self);
     }
 
     let free_variables =
-      discover_free_variables(ArrowOrFunction::ArrowFunction(arrow), &self.stack);
+      self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow), &self.stack);
 
     // replace the ArrowExpr with a call to wrapClosure, wrapping the ArrowExpr with metadata
     let call = Expr::Call(wrap_closure_call(
