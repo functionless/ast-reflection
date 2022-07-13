@@ -81,19 +81,11 @@ impl VisitMut for ClosureDecorator {
 
 impl ClosureDecorator {
   fn wrap_function(&mut self, func: &mut Function, ident: Option<Ident>) -> Expr {
-    self.enter(Scope::Function);
-
-    let block = func.body.as_ref().unwrap();
-
-    // place the params on the scope
-    self.bind_params(&func.params);
-    // hoist all of the function/var declarations into scope
-    self.bind_stmts(&block.stmts);
-
     // discover which identifiers within the closure point to free variables
     let free_variables = self.discover_free_variables(ArrowOrFunction::Function(func));
 
-    // borrow the block for transformation
+    self.enter(Scope::Function);
+
     let block = func.body.as_mut().unwrap();
 
     // transform each of the children nodes now that we have extracted the free variables
@@ -115,11 +107,11 @@ impl ClosureDecorator {
   }
 
   fn wrap_arrow_expr(&mut self, arrow: &mut ArrowExpr) -> Expr {
-    // push a new frame onto the stack for the contents of this function
-    self.enter(Scope::Function);
-
     // analyze the free variable prior to transformation
     let free_variables = self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow));
+
+    // push a new frame onto the stack for the contents of this function
+    self.enter(Scope::Function);
 
     // transform the closure's body
     match &mut arrow.body {
