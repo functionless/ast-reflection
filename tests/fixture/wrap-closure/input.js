@@ -17,3 +17,13 @@ const c = () => {
     i;
   };
 };
+
+const d = () => {
+  {
+    () => {
+      a; // capture hoisted free variable, a
+    };
+  }
+
+  var a;
+};

@@ -45,22 +45,6 @@ impl ClosureDecorator {
 
 // read-only visitor that will discover free variables
 impl Visit for FreeVariableVisitor {
-  fn visit_ident(&mut self, ident: &Ident) {
-    // all identifiers that are discovered by the visitor are assumed to be references
-    match self.vm.lookup_ident(ident, Scope::Block) {
-      None => {
-        // didn't find the identifier in the isolated scope, this must be a free variable
-        self.free_variables.insert(ident.to_id());
-        // if self.outer_names.contains_key(&ident.sym) {
-        //   // a captured free variable
-        // } else {
-        //   // assume as globally defined
-        // }
-      }
-      _ => {}
-    }
-  }
-
   fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
     self.vm.enter(Scope::Function);
 
@@ -80,10 +64,10 @@ impl Visit for FreeVariableVisitor {
   fn visit_function(&mut self, function: &Function) {
     self.vm.enter(Scope::Function);
 
-    // hoist all of the parameters into the function scope (any functions within the default arguments ca)
+    // greedily bind all of the parameters into the block scope (any functions within the default arguments ca)
     // a default arrow function can access any of the parameters
     // function foo(a, b = () => a) {}
-    self.vm.bind_all_params(&function.params, Scope::Function);
+    self.vm.bind_all_params(&function.params, Scope::Block);
 
     match &function.body {
       Some(body) => {
@@ -92,7 +76,7 @@ impl Visit for FreeVariableVisitor {
         //   function bar() {}
         //            ^ visible to b = () => bar
         // }
-        self.vm.bind_hoisted_stmts(&body.stmts, Scope::Function);
+        self.vm.bind_block(&body);
 
         function.params.iter().for_each(|param| {
           // walk through each param left to right and bind them to the Block scope
@@ -112,6 +96,16 @@ impl Visit for FreeVariableVisitor {
     self.vm.exit();
   }
 
+  fn visit_block_stmt(&mut self, block: &BlockStmt) {
+    self.vm.enter(Scope::Block);
+
+    self.vm.bind_block(block);
+
+    block.visit_children_with(self);
+
+    self.vm.exit();
+  }
+
   fn visit_var_declarator(&mut self, var: &VarDeclarator) {
     self.vm.bind_pat(&var.name, Scope::Block);
 
@@ -123,11 +117,19 @@ impl Visit for FreeVariableVisitor {
     }
   }
 
-  fn visit_block_stmt(&mut self, block: &BlockStmt) {
-    self.vm.enter(Scope::Block);
-
-    block.visit_children_with(self);
-
-    self.vm.exit();
+  fn visit_ident(&mut self, ident: &Ident) {
+    // all identifiers that are discovered by the visitor are assumed to be references
+    match self.vm.lookup_ident(ident, Scope::Block) {
+      None => {
+        // didn't find the identifier in the isolated scope, this must be a free variable
+        self.free_variables.insert(ident.to_id());
+        // if self.outer_names.contains_key(&ident.sym) {
+        //   // a captured free variable
+        // } else {
+        //   // assume as globally defined
+        // }
+      }
+      _ => {}
+    }
   }
 }

@@ -45,3 +45,24 @@ const c = global.__fnl_func(
     free: [],
   })
 );
+
+const d = global.__fnl_func(
+  () => {
+    {
+      global.__fnl_func(
+        () => {
+          a; // capture hoisted free variable, a
+        },
+        () => ({
+          __filename,
+          free: [["a", 4, a]],
+        })
+      );
+    }
+    var a;
+  },
+  () => ({
+    __filename,
+    free: [],
+  })
+);

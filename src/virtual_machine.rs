@@ -165,6 +165,34 @@ impl VirtualMachine {
     ident.to_id().1.to_owned().as_u32()
   }
 
+  pub fn bind_block(&mut self, block: &BlockStmt) {
+    self.bind_block_stmts(&block.stmts)
+  }
+
+  pub fn bind_block_stmts<T>(&mut self, stmts: &[T])
+  where
+    T: StmtLike,
+  {
+    stmts.iter().for_each(|stmt| match stmt.as_stmt() {
+      Some(stmt) => match stmt {
+        Stmt::Decl(Decl::Var(var)) => var.decls.iter().for_each(|decl| {
+          if decl.init.is_none() {
+            // var x; // no initializer -> hoist to block scope
+            self.bind_var_declarator(decl, Scope::Block)
+          } else {
+            self.bind_var_declarator(decl, Scope::Function);
+          }
+        }),
+        Stmt::Decl(Decl::Fn(func)) => {
+          // function decl() {} // function declaration - hoist to block scope
+          self.bind_ident(&func.ident, Scope::Block);
+        }
+        _ => {}
+      },
+      _ => {}
+    });
+  }
+
   pub fn bind_all_params(&mut self, params: &[Param], scope: Scope) {
     params
       .iter()
@@ -230,69 +258,7 @@ impl VirtualMachine {
   /**
    * Bind names produced by a [VarDeclarator](VarDeclarator)
    */
-  pub fn bind_var_declarator(&mut self, kind: VarDeclKind, decl: &VarDeclarator, scope: Scope) {
-    match decl.init.as_deref() {
-      None if kind == VarDeclKind::Var => {
-        // var x;
-        self.bind_pat(&decl.name, scope);
-      }
-      Some(_) => {
-        // var x = v;
-        // let x = b;
-        // const x = v;
-
-        // bind the names to the current lexical scope
-        self.bind_pat(&decl.name, scope);
-      }
-      None => {
-        // let x;
-
-        // bind the names to the current lexical scope
-        self.bind_pat(&decl.name, scope);
-      }
-    }
-  }
-
-  /**
-   * Generic function that will walk all statements in a block and hoist
-   * all function declarations and any var declarations that can be hoisted.
-   *
-   * Stores the names produced by a [stmt](Stmt):
-   * 1. function declarations
-   * ```ts
-   * function foo() {}
-   * ```
-   * 2. var declarations that have no initializer
-   * ```ts
-   * var foo;
-   * ```
-   */
-  pub fn bind_hoisted_stmts<T>(&mut self, stmts: &[T], scope: Scope)
-  where
-    T: StmtLike,
-  {
-    stmts.iter().for_each(|stmt| {
-      // hoist all of the function and var declarations in the module into scope
-      match stmt.as_stmt() {
-        Some(stmt) => {
-          match stmt {
-            Stmt::Decl(Decl::Var(var)) if var.kind == VarDeclKind::Var => {
-              var.decls.iter().for_each(|decl| {
-                if decl.init.is_none() {
-                  self.bind_var_declarator(VarDeclKind::Var, decl, scope);
-                }
-              });
-            }
-            Stmt::Decl(Decl::Fn(func)) => {
-              // function declarations should be hoisted to the Block scope
-              self.bind_ident(&func.ident, scope);
-            }
-            _ => {}
-          }
-          // self.scope.hoist_stmt(&stmt);
-        }
-        _ => {}
-      }
-    });
+  pub fn bind_var_declarator(&mut self, decl: &VarDeclarator, scope: Scope) {
+    self.bind_pat(&decl.name, scope);
   }
 }
