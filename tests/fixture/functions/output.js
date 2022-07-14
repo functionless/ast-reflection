@@ -160,11 +160,6 @@ global.__fnl_func(()=>{
                 "e",
                 1,
                 e
-            ],
-            [
-                "prop",
-                0,
-                prop
             ]
         ]
     }));
@@ -211,11 +206,6 @@ global.__fnl_func(()=>{
                 "g",
                 1,
                 g
-            ],
-            [
-                "prop",
-                0,
-                prop
             ]
         ]
     }));

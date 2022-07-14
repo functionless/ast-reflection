@@ -14,76 +14,20 @@ pub struct VirtualMachine {
 impl VirtualMachine {
   pub fn new() -> VirtualMachine {
     VirtualMachine {
-      stack: Stack::from(vec![LexicalScope::new()]),
+      stack: Stack::from(vec![Names::new()]),
     }
   }
 }
 
-#[derive(Clone)]
-pub struct LexicalScope {
-  /**
-   * Variables visible at this point in the tree.
-   */
-  block: Names,
-  /**
-   * A Stack of variables including hoisted functions and variable declarations
-   *
-   * i.e. declarations captured by looking ahead in the tree.
-   *
-   * ```ts
-   * let i = 0;
-   * // local: [i]
-   * // hoisted: [i, foo]
-   * function foo() {
-   *  let j = 0;
-   *  // local: [i, foo, j]
-   *  // hoisted: [i, foo, j, bar]
-   *
-   *  function bar() {}
-   * }
-   * ```
-   */
-  function: Names,
-}
-
-impl LexicalScope {
-  fn new() -> LexicalScope {
-    LexicalScope {
-      block: Names::new(),
-      function: Names::new(),
-    }
-  }
-}
-
-pub type Stack = Vec<LexicalScope>;
-
-#[derive(Eq, PartialEq, Clone, Copy)]
-pub enum Scope {
-  /**
-   * Functions can see all of names in their parent scopes.
-   */
-  Function,
-  /**
-   * A Block can only see hoisted function declarations and variable declarations.
-   */
-  Block,
-}
+pub type Stack = Vec<Names>;
 
 impl VirtualMachine {
-  pub fn lookup_ident(&self, ident: &Ident, scope: Scope) -> Option<u32> {
-    self.lookup_name(&ident.sym, scope)
+  pub fn lookup_ident(&self, ident: &Ident) -> Option<u32> {
+    self.lookup_name(&ident.sym)
   }
 
-  pub fn lookup_name(&self, name: &JsWord, scope: Scope) -> Option<u32> {
-    self.stack.last().and_then(|lex| {
-      (if scope == Scope::Block {
-        &lex.block
-      } else {
-        &lex.function
-      })
-      .get(name)
-      .map(|u| *u)
-    })
+  pub fn lookup_name(&self, name: &JsWord) -> Option<u32> {
+    self.stack.last().and_then(|lex| lex.get(name).map(|u| *u))
   }
 
   /**
@@ -119,68 +63,34 @@ impl VirtualMachine {
    * let b;
    * ```
    */
-  pub fn enter(&mut self, scope: Scope) {
+  pub fn enter(&mut self) {
     // cloning immutable hash maps is fast - O(1)
     // data sharing of immutable data structures should also be memory efficient - O(lg n)
     self.stack.push(match self.stack.last() {
-      Some(parent) => match scope {
-        Scope::Block => LexicalScope {
-          function: parent.function.clone(),
-          block: parent.block.clone(),
-        },
-        Scope::Function => LexicalScope {
-          function: parent.function.clone(),
-          block: parent.function.clone(),
-        },
-      },
-      None => LexicalScope::new(),
+      Some(parent) => parent.clone(),
+      None => Names::new(),
     });
   }
 
-  pub fn exit(&mut self) -> LexicalScope {
+  pub fn exit(&mut self) -> Names {
     match self.stack.pop() {
       Some(popped) => popped,
       None => panic!("stack underflow"),
     }
   }
 
-  pub fn get_names(&self, scope: Scope) -> &Names {
-    match self.stack.last() {
-      Some(popped) => match scope {
-        Scope::Block => &popped.block,
-        Scope::Function => &popped.function,
-      },
-      None => panic!("stack underflow"),
-    }
-  }
-
-  pub fn get_names_mut(&mut self, scope: Scope) -> &mut Names {
-    match self.stack.last_mut() {
-      Some(popped) => match scope {
-        Scope::Block => &mut popped.block,
-        Scope::Function => &mut popped.function,
-      },
-      None => panic!("stack underflow"),
-    }
-  }
-
-  pub fn update_name(&mut self, name: JsWord, id: u32, scope: Scope) {
-    let names = self.get_names_mut(scope);
+  pub fn update_name(&mut self, name: JsWord, id: u32) {
+    let names = self.stack.last_mut().expect("stack underflow");
     *names = names.update(name, id);
   }
 
   /**
    * Binds the name of an [ident](Ident) to the current [lexical scope](LexicalScope).
    */
-  pub fn bind_ident(&mut self, ident: &Ident, scope: Scope) {
+  pub fn bind_ident(&mut self, ident: &Ident) {
     let id = self.get_unique_id(&ident);
 
-    if scope == Scope::Block {
-      // block identifiers only come into scope when they are evaluated
-      self.update_name(ident.sym.clone(), id, Scope::Block);
-    }
-    // all names are visible in the Function scope
-    self.update_name(ident.sym.clone(), id, Scope::Function);
+    self.update_name(ident.sym.clone(), id);
   }
 
   /**
@@ -203,16 +113,11 @@ impl VirtualMachine {
     stmts.iter().for_each(|stmt| match stmt.as_stmt() {
       Some(stmt) => match stmt {
         Stmt::Decl(Decl::Var(var)) => var.decls.iter().for_each(|decl| {
-          if decl.init.is_none() {
-            // var x; // no initializer -> hoist to block scope
-            self.bind_var_declarator(decl, Scope::Block)
-          } else {
-            self.bind_var_declarator(decl, Scope::Function);
-          }
+          self.bind_var_declarator(decl);
         }),
         Stmt::Decl(Decl::Fn(func)) => {
           // function decl() {} // function declaration - hoist to block scope
-          self.bind_ident(&func.ident, Scope::Block);
+          self.bind_ident(&func.ident);
         }
         _ => {}
       },
@@ -220,18 +125,16 @@ impl VirtualMachine {
     });
   }
 
-  pub fn bind_all_params(&mut self, params: &[Param], scope: Scope) {
-    params
-      .iter()
-      .for_each(|param| self.bind_param(&param, scope));
+  pub fn bind_all_params(&mut self, params: &[Param]) {
+    params.iter().for_each(|param| self.bind_param(&param));
   }
 
-  pub fn bind_param(&mut self, param: &Param, scope: Scope) {
-    self.bind_pat(&param.pat, scope);
+  pub fn bind_param(&mut self, param: &Param) {
+    self.bind_pat(&param.pat);
   }
 
-  pub fn bind_all_pats(&mut self, pats: &[Pat], scope: Scope) {
-    pats.iter().for_each(|p| self.bind_pat(p, scope));
+  pub fn bind_all_pats(&mut self, pats: &[Pat]) {
+    pats.iter().for_each(|p| self.bind_pat(p));
   }
 
   /**
@@ -245,26 +148,25 @@ impl VirtualMachine {
    * [d];
    * ```
    */
-  pub fn bind_pat(&mut self, pat: &Pat, scope: Scope) {
+  pub fn bind_pat(&mut self, pat: &Pat) {
     match pat {
       // (a, b) => {}
       Pat::Ident(ident) => {
-        self.bind_ident(&ident.id, scope);
+        self.bind_ident(&ident.id);
       }
       // ({a, b: c}) => {}
       Pat::Object(o) => {
         for prop in o.props.iter() {
           match prop {
             ObjectPatProp::Assign(a) => {
-              self.bind_ident(&a.key, scope);
+              self.bind_ident(&a.key);
             }
             ObjectPatProp::KeyValue(kv) => {
-              self.bind_pat(kv.value.as_ref(), scope);
+              self.bind_pat(kv.value.as_ref());
             }
             ObjectPatProp::Rest(rest) => {
-              self.bind_pat(rest.arg.as_ref(), scope);
+              self.bind_pat(rest.arg.as_ref());
             }
-            _ => {}
           }
         }
       }
@@ -272,18 +174,18 @@ impl VirtualMachine {
       Pat::Array(a) => {
         for element in a.elems.iter() {
           if element.is_some() {
-            self.bind_pat(element.as_ref().unwrap(), scope);
+            self.bind_pat(element.as_ref().unwrap());
           }
         }
       }
       // (a = value) => {}
       Pat::Assign(assign) => {
         // bind the variable onto the scope
-        self.bind_pat(assign.left.as_ref(), scope);
+        self.bind_pat(assign.left.as_ref());
       }
 
       Pat::Rest(rest) => {
-        self.bind_pat(rest.arg.as_ref(), scope);
+        self.bind_pat(rest.arg.as_ref());
       }
 
       _ => {}
@@ -293,7 +195,7 @@ impl VirtualMachine {
   /**
    * Bind names produced by a [VarDeclarator](VarDeclarator)
    */
-  pub fn bind_var_declarator(&mut self, decl: &VarDeclarator, scope: Scope) {
-    self.bind_pat(&decl.name, scope);
+  pub fn bind_var_declarator(&mut self, decl: &VarDeclarator) {
+    self.bind_pat(&decl.name);
   }
 }

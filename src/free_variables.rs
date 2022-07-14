@@ -1,9 +1,6 @@
 use std::collections::HashSet;
 
-use crate::{
-  closure_decorator::ClosureDecorator,
-  virtual_machine::{Scope, VirtualMachine},
-};
+use crate::{closure_decorator::ClosureDecorator, virtual_machine::VirtualMachine};
 use swc_plugin::ast::*;
 
 pub enum ArrowOrFunction<'a> {
@@ -48,7 +45,7 @@ impl ClosureDecorator {
 // read-only visitor that will discover free variables
 impl Visit for FreeVariableVisitor {
   fn visit_block_stmt(&mut self, block: &BlockStmt) {
-    self.vm.enter(Scope::Block);
+    self.vm.enter();
 
     self.vm.bind_block(block);
 
@@ -58,9 +55,9 @@ impl Visit for FreeVariableVisitor {
   }
 
   fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
-    self.vm.enter(Scope::Function);
+    self.vm.enter();
 
-    self.vm.bind_all_pats(&arrow.params, Scope::Block);
+    self.vm.bind_all_pats(&arrow.params);
 
     match &arrow.body {
       BlockStmtOrExpr::Expr(expr) => {
@@ -76,12 +73,12 @@ impl Visit for FreeVariableVisitor {
   }
 
   fn visit_function(&mut self, function: &Function) {
-    self.vm.enter(Scope::Function);
+    self.vm.enter();
 
     // greedily bind all of the parameters into the block scope (any functions within the default arguments ca)
     // a default arrow function can access any of the parameters
     // function foo(a, b = () => a) {}
-    self.vm.bind_all_params(&function.params, Scope::Block);
+    self.vm.bind_all_params(&function.params);
 
     match &function.body {
       Some(body) => {
@@ -94,7 +91,7 @@ impl Visit for FreeVariableVisitor {
 
         function.params.iter().for_each(|param| {
           // walk through each param left to right and bind them to the Block scope
-          self.vm.bind_param(param, Scope::Block);
+          self.vm.bind_param(param);
 
           // evaluate the pattern which may contain a default expression
           param.visit_with(self);
@@ -111,7 +108,7 @@ impl Visit for FreeVariableVisitor {
   }
 
   fn visit_var_declarator(&mut self, var: &VarDeclarator) {
-    self.vm.bind_pat(&var.name, Scope::Block);
+    self.vm.bind_pat(&var.name);
 
     match &var.init {
       Some(init) => {
@@ -121,13 +118,22 @@ impl Visit for FreeVariableVisitor {
     }
   }
 
+  fn visit_member_expr(&mut self, member: &MemberExpr) {
+    member.obj.as_ref().visit_with(self);
+
+    match &member.prop {
+      MemberProp::Computed(c) => {
+        // computed properties may contain free variables
+        c.visit_with(self);
+      }
+      _ => {}
+    }
+  }
+
   fn visit_ident(&mut self, ident: &Ident) {
     // all identifiers that are discovered by the visitor are assumed to be references
     // because of the order in which we traverse
-    if self.vm.lookup_ident(ident, Scope::Block).is_none() {
-      if &ident.sym == "i" {
-        println!("hello {:#?}", ident.to_id());
-      }
+    if self.vm.lookup_ident(ident).is_none() {
       self.free_variables.insert(ident.to_id());
     }
   }
