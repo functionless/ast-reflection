@@ -1,4 +1,266 @@
+const { a , b: c , d: [e] , ...f } = {};
+const [g, { h , i: j  }, [k], ...l] = [];
+const m = [];
+const block_scoped_arrow_expr = ()=>{};
+const block_scoped_func_expr = function() {};
+// arrow expr capturing nothing
+()=>{};
+// arrow expr capturing all variables
+global.__fnl_func(()=>{
+    a, c, e, f, g, h, j, k, l, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
+}, ()=>({
+        __filename,
+        free: [
+            [
+                "a",
+                1,
+                a
+            ],
+            [
+                "block_scoped_arrow_expr",
+                1,
+                block_scoped_arrow_expr
+            ],
+            [
+                "block_scoped_func_expr",
+                1,
+                block_scoped_func_expr
+            ],
+            [
+                "c",
+                1,
+                c
+            ],
+            [
+                "e",
+                1,
+                e
+            ],
+            [
+                "f",
+                1,
+                f
+            ],
+            [
+                "g",
+                1,
+                g
+            ],
+            [
+                "h",
+                1,
+                h
+            ],
+            [
+                "hoisted_func",
+                1,
+                hoisted_func
+            ],
+            [
+                "hoisted_var",
+                1,
+                hoisted_var
+            ],
+            [
+                "j",
+                1,
+                j
+            ],
+            [
+                "k",
+                1,
+                k
+            ],
+            [
+                "l",
+                1,
+                l
+            ]
+        ]
+    }));
+// arrow expr where parameters shadow all variables
+(a, c, e, f, g, h, j, k, l, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func)=>{
+    a, c, e, f, g, h, j, k, l, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
+};
+// arrow expr where destructuring syntax inside parameters shadow all variables
+({ a , b: c , d: [e] , hoisted_var , block_scoped_arrow_expr , ...f }, [g, { h , i: j  }, [k], hoisted_func, block_scoped_func_expr, ...l], ...m)=>{
+    a, c, e, f, g, h, j, k, l, m, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
+};
+// arrow expr capturing variables with an element access expression
+global.__fnl_func(()=>{
+    ({})[a];
+    [][b];
+}, ()=>({
+        __filename,
+        free: [
+            [
+                "a",
+                1,
+                a
+            ],
+            [
+                "b",
+                4,
+                b
+            ]
+        ]
+    }));
+// arrow expr capturing a variable with a spread expression
+global.__fnl_func(()=>{
+    ({
+        ...c
+    });
+    [
+        ...d
+    ];
+}, ()=>({
+        __filename,
+        free: [
+            [
+                "c",
+                1,
+                c
+            ],
+            [
+                "d",
+                4,
+                d
+            ]
+        ]
+    }));
+// arrow expr capturing variables in property chains
+global.__fnl_func(()=>{
+    a.prop;
+    b.prop[c];
+    d.prop?.[e];
+}, ()=>({
+        __filename,
+        free: [
+            [
+                "a",
+                1,
+                a
+            ],
+            [
+                "b",
+                4,
+                b
+            ],
+            [
+                "c",
+                1,
+                c
+            ],
+            [
+                "d",
+                4,
+                d
+            ],
+            [
+                "e",
+                1,
+                e
+            ],
+            [
+                "prop",
+                0,
+                prop
+            ]
+        ]
+    }));
+// arrow expr capturing variables as call arguments
+global.__fnl_func(()=>{
+    a("");
+    b(c);
+    c(d.prop);
+    e(f[g]);
+}, ()=>({
+        __filename,
+        free: [
+            [
+                "a",
+                1,
+                a
+            ],
+            [
+                "b",
+                4,
+                b
+            ],
+            [
+                "c",
+                1,
+                c
+            ],
+            [
+                "d",
+                4,
+                d
+            ],
+            [
+                "e",
+                1,
+                e
+            ],
+            [
+                "f",
+                1,
+                f
+            ],
+            [
+                "g",
+                1,
+                g
+            ],
+            [
+                "prop",
+                0,
+                prop
+            ]
+        ]
+    }));
+var hoisted_var;
+function hoisted_func() {}
 let i;
+// shadowed let should not be captured
+()=>{
+    let i = 0;
+    i; // not a free variable since it is shadowed within this scope
+};
+()=>{
+    let i = 0; // let i#3 = 0
+    global.__fnl_func(// capture the shadowed i
+    ()=>{
+        i; // i#3
+    }, ()=>({
+            __filename,
+            free: [
+                [
+                    "i",
+                    6,
+                    i
+                ]
+            ]
+        }));
+};
+// capture a hoisted var
+()=>{
+    {
+        global.__fnl_func(()=>{
+            a; // capture hoisted free variable, a
+        }, ()=>({
+                __filename,
+                free: [
+                    [
+                        "a",
+                        7,
+                        a
+                    ]
+                ]
+            }));
+    }
+    var a;
+};
 // arrow expression
 {
     const capture_default_reference_to_param_in_closure = (a = global.__fnl_func(()=>{
@@ -24,83 +286,70 @@ let i;
             free: [
                 [
                     "i",
-                    6,
+                    12,
                     i
                 ]
             ]
         })))=>{};
     const arg_destructuring_test = (i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m)=>{
         return global.__fnl_func(()=>{
-            i;
-            a;
-            // b;
-            c;
-            // d;
-            e;
-            f;
-            g;
-            h;
-            // i;
-            j;
-            k;
-            l;
-            m;
+            i, a, c, e, f, g, h, j, k, l, m;
         }, ()=>({
                 __filename,
                 free: [
                     [
                         "a",
-                        7,
+                        13,
                         a
                     ],
                     [
                         "c",
-                        7,
+                        13,
                         c
                     ],
                     [
                         "e",
-                        7,
+                        13,
                         e
                     ],
                     [
                         "f",
-                        7,
+                        13,
                         f
                     ],
                     [
                         "g",
-                        7,
+                        13,
                         g
                     ],
                     [
                         "h",
-                        7,
+                        13,
                         h
                     ],
                     [
                         "i",
-                        7,
+                        13,
                         i
                     ],
                     [
                         "j",
-                        7,
+                        13,
                         j
                     ],
                     [
                         "k",
-                        7,
+                        13,
                         k
                     ],
                     [
                         "l",
-                        7,
+                        13,
                         l
                     ],
                     [
                         "m",
-                        7,
+                        13,
                         m
                     ]
                 ]
@@ -129,76 +378,63 @@ let i;
     }) {};
     const arg_destructuring_test1 = global.__fnl_func(function(i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m) {
         return global.__fnl_func(function() {
-            i;
-            a;
-            // b;
-            c;
-            // d;
-            e;
-            f;
-            g;
-            h;
-            // i;
-            j;
-            k;
-            l;
-            m;
+            i, a, c, e, f, g, h, j, k, l, m;
         }, ()=>({
                 __filename,
                 free: [
                     [
                         "a",
-                        13,
+                        19,
                         a
                     ],
                     [
                         "c",
-                        13,
+                        19,
                         c
                     ],
                     [
                         "e",
-                        13,
+                        19,
                         e
                     ],
                     [
                         "f",
-                        13,
+                        19,
                         f
                     ],
                     [
                         "g",
-                        13,
+                        19,
                         g
                     ],
                     [
                         "h",
-                        13,
+                        19,
                         h
                     ],
                     [
                         "i",
-                        13,
+                        19,
                         i
                     ],
                     [
                         "j",
-                        13,
+                        19,
                         j
                     ],
                     [
                         "k",
-                        13,
+                        19,
                         k
                     ],
                     [
                         "l",
-                        13,
+                        19,
                         l
                     ],
                     [
                         "m",
-                        13,
+                        19,
                         m
                     ]
                 ]
@@ -271,7 +507,7 @@ let i;
             free: [
                 [
                     "i",
-                    18,
+                    24,
                     i
                 ]
             ]
@@ -279,76 +515,63 @@ let i;
     ;
     function arg_destructuring_test2(i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m) {
         return global.__fnl_func(()=>{
-            i;
-            a;
-            // b;
-            c;
-            // d;
-            e;
-            f;
-            g;
-            h;
-            // i;
-            j;
-            k;
-            l;
-            m;
+            i, a, c, e, f, g, h, j, k, l, m;
         }, ()=>({
                 __filename,
                 free: [
                     [
                         "a",
-                        19,
+                        25,
                         a
                     ],
                     [
                         "c",
-                        19,
+                        25,
                         c
                     ],
                     [
                         "e",
-                        19,
+                        25,
                         e
                     ],
                     [
                         "f",
-                        19,
+                        25,
                         f
                     ],
                     [
                         "g",
-                        19,
+                        25,
                         g
                     ],
                     [
                         "h",
-                        19,
+                        25,
                         h
                     ],
                     [
                         "i",
-                        19,
+                        25,
                         i
                     ],
                     [
                         "j",
-                        19,
+                        25,
                         j
                     ],
                     [
                         "k",
-                        19,
+                        25,
                         k
                     ],
                     [
                         "l",
-                        19,
+                        25,
                         l
                     ],
                     [
                         "m",
-                        19,
+                        25,
                         m
                     ]
                 ]

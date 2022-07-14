@@ -1,4 +1,5 @@
 use swc_common::{util::take::Take, DUMMY_SP};
+use swc_common::{BytePos, Span};
 use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, quote_ident};
@@ -176,11 +177,16 @@ fn register_closure_call(expr: Box<Expr>, free_variables: Vec<Id>) -> CallExpr {
                             value: v.1.as_u32() as f64,
                             raw: None,
                           })),
-                          Expr::Ident(Ident {
-                            optional: false,
-                            span: DUMMY_SP,
-                            sym: v.0.clone(),
-                          }),
+                          Expr::Ident(quote_ident!(
+                            Span {
+                              hi: BytePos(0),
+                              lo: BytePos(0),
+                              // this is very important - we must attach the SyntaxContext of the free variable's origin
+                              // or else: when rust renames identifiers, it will skip this one, leaving us with a broken references
+                              ctxt: v.1,
+                            },
+                            *v.0
+                          )),
                         ]
                         .iter()
                         .map(|expr| {

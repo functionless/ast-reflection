@@ -63,7 +63,9 @@ impl Visit for FreeVariableVisitor {
     self.vm.bind_all_pats(&arrow.params, Scope::Block);
 
     match &arrow.body {
-      BlockStmtOrExpr::Expr(expr) => expr.visit_with(self),
+      BlockStmtOrExpr::Expr(expr) => {
+        expr.visit_with(self);
+      }
       BlockStmtOrExpr::BlockStmt(block) => {
         self.vm.bind_block(block);
         block.visit_children_with(self);
@@ -121,17 +123,12 @@ impl Visit for FreeVariableVisitor {
 
   fn visit_ident(&mut self, ident: &Ident) {
     // all identifiers that are discovered by the visitor are assumed to be references
-    match self.vm.lookup_ident(ident, Scope::Block) {
-      None => {
-        // didn't find the identifier in the isolated scope, this must be a free variable
-        self.free_variables.insert(ident.to_id());
-        // if self.outer_names.contains_key(&ident.sym) {
-        //   // a captured free variable
-        // } else {
-        //   // assume as globally defined
-        // }
+    // because of the order in which we traverse
+    if self.vm.lookup_ident(ident, Scope::Block).is_none() {
+      if &ident.sym == "i" {
+        println!("hello {:#?}", ident.to_id());
       }
-      _ => {}
+      self.free_variables.insert(ident.to_id());
     }
   }
 }
