@@ -45,6 +45,16 @@ impl ClosureDecorator {
 
 // read-only visitor that will discover free variables
 impl Visit for FreeVariableVisitor {
+  fn visit_block_stmt(&mut self, block: &BlockStmt) {
+    self.vm.enter(Scope::Block);
+
+    self.vm.bind_block(block);
+
+    block.visit_children_with(self);
+
+    self.vm.exit();
+  }
+
   fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
     self.vm.enter(Scope::Function);
 
@@ -55,7 +65,10 @@ impl Visit for FreeVariableVisitor {
 
     match &arrow.body {
       BlockStmtOrExpr::Expr(expr) => expr.visit_with(self),
-      BlockStmtOrExpr::BlockStmt(stmt) => stmt.visit_with(self),
+      BlockStmtOrExpr::BlockStmt(block) => {
+        self.vm.bind_block(block);
+        block.visit_children_with(self);
+      }
     }
 
     self.vm.exit();
@@ -92,16 +105,6 @@ impl Visit for FreeVariableVisitor {
       }
       _ => {}
     }
-
-    self.vm.exit();
-  }
-
-  fn visit_block_stmt(&mut self, block: &BlockStmt) {
-    self.vm.enter(Scope::Block);
-
-    self.vm.bind_block(block);
-
-    block.visit_children_with(self);
 
     self.vm.exit();
   }

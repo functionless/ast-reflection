@@ -64,14 +64,15 @@ impl VisitMut for ClosureDecorator {
             block.visit_mut_children_with(self);
           }
         }
+        if !free_variables.is_empty() {
+          // wrap the closure in a decorator call
+          let call = Expr::Call(register_closure_call(
+            Box::new(Expr::Arrow(arrow.take())),
+            free_variables,
+          ));
 
-        // wrap the closure in a decorator call
-        let call = Expr::Call(register_closure_call(
-          Box::new(Expr::Arrow(arrow.take())),
-          free_variables,
-        ));
-
-        *expr = call;
+          *expr = call;
+        }
       }
       Expr::Fn(func) => {
         // discover which identifiers within the closure point to free variables
@@ -87,17 +88,19 @@ impl VisitMut for ClosureDecorator {
           .unwrap()
           .visit_mut_children_with(self);
 
-        // wrap the Function with a call to global.__fnl_func to
-        let call = Expr::Call(register_closure_call(
-          Box::new(Expr::Fn(FnExpr {
-            function,
-            ident: func.ident.take(),
-          })),
-          // decorate the closure with its free variables
-          free_variables,
-        ));
+        if !free_variables.is_empty() {
+          // wrap the Function with a call to global.__fnl_func to
+          let call = Expr::Call(register_closure_call(
+            Box::new(Expr::Fn(FnExpr {
+              function,
+              ident: func.ident.take(),
+            })),
+            // decorate the closure with its free variables
+            free_variables,
+          ));
 
-        *expr = call;
+          *expr = call;
+        }
       }
       _ => {}
     };
@@ -111,13 +114,17 @@ impl ClosureDecorator {
         let free_variables =
           self.discover_free_variables(ArrowOrFunction::Function(&func.function));
 
-        Some(Stmt::Expr(ExprStmt {
-          expr: Box::new(Expr::Call(register_closure_call(
-            Box::new(Expr::Ident(func.ident.clone())),
-            free_variables,
-          ))),
-          span: DUMMY_SP,
-        }))
+        if free_variables.is_empty() {
+          None
+        } else {
+          Some(Stmt::Expr(ExprStmt {
+            expr: Box::new(Expr::Call(register_closure_call(
+              Box::new(Expr::Ident(func.ident.clone())),
+              free_variables,
+            ))),
+            span: DUMMY_SP,
+          }))
+        }
       }
       _ => None,
     }
