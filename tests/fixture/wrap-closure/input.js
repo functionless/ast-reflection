@@ -1,24 +1,27 @@
 let i = 0; // let i#1 = 0
-const a = () => {
+
+const capture_module_scoped_let = () => {
   i;
 };
-function _a() {
+
+function function_decl_captures_module_scope_let() {
   i;
 }
-const b = () => {
+
+const dont_capture_shadowed_let = () => {
   let i = 0; // let i#2 = 0
   i; // not a free variable since it is shadowed within this scope
 };
 
-const c = () => {
+() => {
   let i = 0; // let i#3 = 0
 
-  const d = () => {
-    i;
+  const capture_shadowed_let = () => {
+    i; // i#3
   };
 };
 
-const d = () => {
+const capture_hoisted_var = () => {
   {
     () => {
       a; // capture hoisted free variable, a

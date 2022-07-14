@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
@@ -55,6 +53,9 @@ impl VisitMut for ClosureDecorator {
         // analyze the free variable prior to transformation
         let free_variables = self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow));
 
+        // transform all of the parameters
+        arrow.params.visit_mut_with(self);
+
         // transform the closure's body
         match &mut arrow.body {
           BlockStmtOrExpr::Expr(expr) => {
@@ -64,6 +65,7 @@ impl VisitMut for ClosureDecorator {
             block.visit_mut_children_with(self);
           }
         }
+
         if !free_variables.is_empty() {
           // wrap the closure in a decorator call
           let call = Expr::Call(register_closure_call(
@@ -74,21 +76,21 @@ impl VisitMut for ClosureDecorator {
           *expr = call;
         }
       }
-      Expr::Fn(func) => {
+      Expr::Fn(func) if func.function.body.is_some() => {
         // discover which identifiers within the closure point to free variables
         let free_variables =
           self.discover_free_variables(ArrowOrFunction::Function(&func.function));
 
-        let mut function = func.function.take();
-
-        // transform each of the children nodes now that we have extracted the free variables
-        function
-          .body
-          .as_mut()
-          .unwrap()
-          .visit_mut_children_with(self);
-
         if !free_variables.is_empty() {
+          let mut function = func.function.take();
+
+          // transform each of the children nodes now that we have extracted the free variables
+          function
+            .body
+            .as_mut()
+            .unwrap()
+            .visit_mut_children_with(self);
+
           // wrap the Function with a call to global.__fnl_func to
           let call = Expr::Call(register_closure_call(
             Box::new(Expr::Fn(FnExpr {
@@ -134,7 +136,7 @@ impl ClosureDecorator {
 /**
  * global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
  */
-fn register_closure_call(expr: Box<Expr>, free_variables: HashSet<Id>) -> CallExpr {
+fn register_closure_call(expr: Box<Expr>, free_variables: Vec<Id>) -> CallExpr {
   // global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
   CallExpr {
     span: DUMMY_SP,

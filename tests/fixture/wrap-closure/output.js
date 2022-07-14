@@ -1,9 +1,9 @@
-global.__fnl_func(_a, () => ({
+global.__fnl_func(function_decl_captures_module_scope_let, () => ({
   __filename,
   free: [["i", 1, i]],
 }));
 let i = 0; // let i#1 = 0
-const a = global.__fnl_func(
+const capture_module_scoped_let = global.__fnl_func(
   () => {
     i;
   },
@@ -12,18 +12,18 @@ const a = global.__fnl_func(
     free: [["i", 1, i]],
   })
 );
-function _a() {
+function function_decl_captures_module_scope_let() {
   i;
 }
-const b = () => {
+const dont_capture_shadowed_let = () => {
   let i = 0; // let i#2 = 0
   i; // not a free variable since it is shadowed within this scope
 };
-const c = () => {
+() => {
   let i = 0; // let i#3 = 0
-  const d = global.__fnl_func(
+  const capture_shadowed_let = global.__fnl_func(
     () => {
-      i;
+      i; // i#3
     },
     () => ({
       __filename,
@@ -31,7 +31,7 @@ const c = () => {
     })
   );
 };
-const d = () => {
+const capture_hoisted_var = () => {
   {
     global.__fnl_func(
       () => {

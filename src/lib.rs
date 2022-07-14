@@ -18,6 +18,6 @@ pub fn wrap_closures(mut program: Program, _metadata: TransformPluginProgramMeta
   program
 }
 
-pub fn wrap(top_level_mark: Mark) -> impl Fold + VisitMut {
+pub fn wrap(_top_level_mark: Mark) -> impl Fold + VisitMut {
   as_folder(ClosureDecorator::new())
 }

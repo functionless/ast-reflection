@@ -23,7 +23,7 @@ pub struct FreeVariableVisitor {
 }
 
 impl ClosureDecorator {
-  pub fn discover_free_variables(&mut self, func: ArrowOrFunction) -> HashSet<Id> {
+  pub fn discover_free_variables(&mut self, func: ArrowOrFunction) -> Vec<Id> {
     let mut visitor = FreeVariableVisitor {
       vm: VirtualMachine::new(),
       // outer_names, // O(1) clone
@@ -39,7 +39,9 @@ impl ClosureDecorator {
       }
     };
 
-    visitor.free_variables
+    let mut free_variables = visitor.free_variables.into_iter().collect::<Vec<Id>>();
+    free_variables.sort_by(|a, b| a.0.cmp(&b.0));
+    free_variables
   }
 }
 
@@ -58,10 +60,7 @@ impl Visit for FreeVariableVisitor {
   fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
     self.vm.enter(Scope::Function);
 
-    // hoist all of the parameters into the function scope (any functions within the default arguments can see all arguments)
-    // a default arrow function can access any of the parameters
-    // (a, b = () => a) => {}
-    self.vm.bind_all_pats(&arrow.params, Scope::Function);
+    self.vm.bind_all_pats(&arrow.params, Scope::Block);
 
     match &arrow.body {
       BlockStmtOrExpr::Expr(expr) => expr.visit_with(self),

@@ -87,23 +87,50 @@ impl VirtualMachine {
   }
 
   /**
-   * Push a Scope onto the Stack.
+   * Push a new [scope](Scope) onto the stack and inherit names from the parent scope.
+   *
+   * ## Case 1 - enter [Block Scope](Scope::Block)
+   *
+   * Only variables from the parent's [Block Scope](Scope::Block) are inherited.
+   *
+   * ```ts
+   * let a;
+   *
+   * function foo() {
+   *   a; // visible - in both Block and Function scope
+   *   b; // visible - only in Function scope
+   * }
+   *
+   * let b;
+   * ```
+   *
+   * ## Case 2 - enter [Function Scope](Scope::Function)
+   *
+   * All variables from the parent's [Function Scope](Scope::Function) are inherited.
+   *
+   * ```ts
+   * let a;
+   *
+   * function foo() {
+   *   a; // visible - in both Block and Function scope
+   *   b; // visible - only in Function scope
+   * }
+   *
+   * let b;
+   * ```
    */
   pub fn enter(&mut self, scope: Scope) {
+    // cloning immutable hash maps is fast - O(1)
+    // data sharing of immutable data structures should also be memory efficient - O(lg n)
     self.stack.push(match self.stack.last() {
       Some(parent) => match scope {
-        // entering function scope
-        // e.g. function foo() { (function scope) }
-        Scope::Function => LexicalScope {
-          // all variables from the parent's function scope are inherited
-          block: parent.function.clone(),
-          function: parent.function.clone(),
-        },
         Scope::Block => LexicalScope {
-          // cloning immutable hash maps is fast - O(1)
-          // data sharing of immutable data structures should also be memory efficient - O(lg n)
           function: parent.function.clone(),
           block: parent.block.clone(),
+        },
+        Scope::Function => LexicalScope {
+          function: parent.function.clone(),
+          block: parent.function.clone(),
         },
       },
       None => LexicalScope::new(),
@@ -234,6 +261,9 @@ impl VirtualMachine {
             ObjectPatProp::KeyValue(kv) => {
               self.bind_pat(kv.value.as_ref(), scope);
             }
+            ObjectPatProp::Rest(rest) => {
+              self.bind_pat(rest.arg.as_ref(), scope);
+            }
             _ => {}
           }
         }
@@ -251,6 +281,11 @@ impl VirtualMachine {
         // bind the variable onto the scope
         self.bind_pat(assign.left.as_ref(), scope);
       }
+
+      Pat::Rest(rest) => {
+        self.bind_pat(rest.arg.as_ref(), scope);
+      }
+
       _ => {}
     }
   }
