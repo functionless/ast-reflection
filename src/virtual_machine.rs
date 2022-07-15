@@ -125,6 +125,16 @@ impl VirtualMachine {
     });
   }
 
+  pub fn bind_all_constructor_params(&mut self, params: &[ParamOrTsParamProp]) {
+    params.iter().for_each(|param| match param {
+      ParamOrTsParamProp::Param(p) => self.bind_param(p),
+      ParamOrTsParamProp::TsParamProp(p) => match &p.param {
+        TsParamPropParam::Assign(assign) => self.bind_pat(assign.left.as_ref()),
+        TsParamPropParam::Ident(ident) => self.bind_ident(&ident.id),
+      },
+    })
+  }
+
   pub fn bind_all_params(&mut self, params: &[Param]) {
     params.iter().for_each(|param| self.bind_param(&param));
   }

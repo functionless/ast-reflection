@@ -253,7 +253,7 @@ let i;
 };
 // arrow expression
 {
-    const capture_default_reference_to_param_in_closure = (a = global.__fnl_func(()=>{
+    const capture_default_reference_to_param_in_closure = global.__fnl_func((a = global.__fnl_func(()=>{
         i; // i#1
     }, ()=>({
             __filename,
@@ -264,7 +264,16 @@ let i;
                     i
                 ]
             ]
-        })))=>{};
+        })))=>{}, ()=>({
+            __filename,
+            free: [
+                [
+                    "i",
+                    1,
+                    i
+                ]
+            ]
+        }));
     const dont_capture_let_shadowed_by_param = (i)=>{
         i;
     };
@@ -347,9 +356,18 @@ let i;
     };
 }// function expressions
 {
-    const capture_default_reference_to_param_in_closure1 = global.__fnl_func(function(a = function() {
+    const capture_default_reference_to_param_in_closure1 = global.__fnl_func(function(a = global.__fnl_func(function() {
         i; // i#1
-    }) {}, ()=>({
+    }, ()=>({
+            __filename,
+            free: [
+                [
+                    "i",
+                    1,
+                    i
+                ]
+            ]
+        }))) {}, ()=>({
             __filename,
             free: [
                 [
@@ -363,10 +381,19 @@ let i;
         i;
     };
     const dont_capture_default_reference_to_param1 = function(i, a = i) {};
-    const dont_capture_default_reference_to_param_in_closure1 = function(i, a = function() {
+    const dont_capture_default_reference_to_param_in_closure1 = function(i, a = global.__fnl_func(function() {
         i;
-    }) {};
-    const arg_destructuring_test1 = global.__fnl_func(function(i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m) {
+    }, ()=>({
+            __filename,
+            free: [
+                [
+                    "i",
+                    18,
+                    i
+                ]
+            ]
+        }))) {};
+    const arg_destructuring_test1 = function(i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m) {
         return global.__fnl_func(function() {
             i, a, c, e, f, g, h, j, k, l, m;
         }, ()=>({
@@ -429,21 +456,7 @@ let i;
                     ]
                 ]
             }));
-    }, ()=>({
-            __filename,
-            free: [
-                [
-                    "b",
-                    0,
-                    b
-                ],
-                [
-                    "d",
-                    0,
-                    d
-                ]
-            ]
-        }));
+    };
 }// function declarations
 {
     global.__fnl_func(capture_default_reference_to_param_in_closure2, ()=>({
@@ -453,21 +466,6 @@ let i;
                     "i",
                     1,
                     i
-                ]
-            ]
-        }));
-    global.__fnl_func(arg_destructuring_test2, ()=>({
-            __filename,
-            free: [
-                [
-                    "b",
-                    0,
-                    b
-                ],
-                [
-                    "d",
-                    0,
-                    d
                 ]
             ]
         }));

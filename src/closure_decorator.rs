@@ -4,8 +4,6 @@ use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, quote_ident};
 
-use crate::free_variables::ArrowOrFunction;
-
 pub struct ClosureDecorator {}
 
 impl ClosureDecorator {
@@ -48,11 +46,84 @@ impl VisitMut for ClosureDecorator {
     prepend_stmts(&mut block.stmts, register_stmts.into_iter());
   }
 
+  fn visit_mut_class(&mut self, class: &mut Class) {
+    let mut register_stmts: Vec<Stmt> = class
+      .body
+      .iter()
+      .filter_map(|member| match member {
+        ClassMember::Method(method) => {
+          let free_variables = self.discover_free_variables(method);
+
+          if !free_variables.is_empty() {
+            Some(register_closure_stmt(
+              // global.__fnl__func(this.prototype.method_name, () => .. )
+              Expr::Member(MemberExpr {
+                // this.prototype
+                obj: Box::new(Expr::Member(MemberExpr {
+                  obj: Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
+                  prop: MemberProp::Ident(quote_ident!("prototype")),
+                  span: DUMMY_SP,
+                })),
+                span: DUMMY_SP,
+                prop: match &method.key {
+                  PropName::Ident(id) => MemberProp::Ident(id.clone()),
+                  PropName::Computed(expr) => MemberProp::Computed(expr.clone()),
+                  prop => MemberProp::Computed(ComputedPropName {
+                    span: DUMMY_SP,
+                    expr: Box::new(Expr::Lit(match prop {
+                      PropName::BigInt(x) => Lit::BigInt(x.clone()),
+                      PropName::Num(x) => Lit::Num(x.clone()),
+                      PropName::Str(x) => Lit::Str(x.clone()),
+                      _ => panic!(""),
+                    })),
+                  }),
+                },
+              }),
+              free_variables,
+            ))
+          } else {
+            None
+          }
+        }
+
+        ClassMember::PrivateMethod(_method) => None,
+
+        _ => None,
+      })
+      .collect();
+
+    let constructor_free_variables: Vec<Id> = class
+      .body
+      .iter()
+      .flat_map(|member| match member {
+        ClassMember::Constructor(constructor) => self.discover_free_variables(constructor),
+        ClassMember::ClassProp(prop) => self.discover_free_variables(prop),
+        _ => vec![],
+      })
+      .collect();
+
+    if !constructor_free_variables.is_empty() {
+      register_stmts.push(register_closure_stmt(
+        Expr::This(ThisExpr { span: DUMMY_SP }),
+        constructor_free_variables,
+      ));
+    }
+    class.visit_mut_children_with(self);
+
+    class.body.push(ClassMember::StaticBlock(StaticBlock {
+      span: DUMMY_SP,
+      body: BlockStmt {
+        span: DUMMY_SP,
+        stmts: register_stmts,
+      },
+    }));
+  }
+
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
         // analyze the free variable prior to transformation
-        let free_variables = self.discover_free_variables(ArrowOrFunction::ArrowFunction(arrow));
+        let free_variables = self.discover_free_variables(arrow);
 
         // transform all of the parameters
         arrow.params.visit_mut_with(self);
@@ -79,24 +150,17 @@ impl VisitMut for ClosureDecorator {
       }
       Expr::Fn(func) if func.function.body.is_some() => {
         // discover which identifiers within the closure point to free variables
-        let free_variables =
-          self.discover_free_variables(ArrowOrFunction::Function(&func.function));
+        let free_variables = self.discover_free_variables(&func.function);
+
+        // transform each of the children nodes now that we have extracted the free variables
+        func.function.visit_mut_children_with(self);
 
         if !free_variables.is_empty() {
-          let mut function = func.function.take();
-
-          // transform each of the children nodes now that we have extracted the free variables
-          function
-            .body
-            .as_mut()
-            .unwrap()
-            .visit_mut_children_with(self);
-
           // wrap the Function with a call to global.__fnl_func to
           let call = Expr::Call(register_closure_call(
             Box::new(Expr::Fn(FnExpr {
-              function,
               ident: func.ident.take(),
+              function: func.function.take(),
             })),
             // decorate the closure with its free variables
             free_variables,
@@ -105,7 +169,9 @@ impl VisitMut for ClosureDecorator {
           *expr = call;
         }
       }
-      _ => {}
+      _ => {
+        expr.visit_mut_children_with(self);
+      }
     };
   }
 }
@@ -114,24 +180,29 @@ impl ClosureDecorator {
   fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
     match stmt {
       Stmt::Decl(Decl::Fn(func)) => {
-        let free_variables =
-          self.discover_free_variables(ArrowOrFunction::Function(&func.function));
+        let free_variables = self.discover_free_variables(&func.function);
 
         if free_variables.is_empty() {
           None
         } else {
-          Some(Stmt::Expr(ExprStmt {
-            expr: Box::new(Expr::Call(register_closure_call(
-              Box::new(Expr::Ident(func.ident.clone())),
-              free_variables,
-            ))),
-            span: DUMMY_SP,
-          }))
+          Some(register_closure_stmt(
+            Expr::Ident(func.ident.clone()),
+            free_variables,
+          ))
         }
       }
       _ => None,
     }
   }
+}
+fn register_closure_stmt(expr: Expr, free_variables: Vec<Id>) -> Stmt {
+  Stmt::Expr(ExprStmt {
+    expr: Box::new(Expr::Call(register_closure_call(
+      Box::new(expr),
+      free_variables,
+    ))),
+    span: DUMMY_SP,
+  })
 }
 
 /**

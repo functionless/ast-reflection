@@ -7,7 +7,7 @@ use swc_ecma_parser::{EsConfig, Syntax};
 use swc_ecma_transforms_testing::{test, test_fixture};
 use swc_ecma_visit::Fold;
 
-#[testing::fixture("tests/fixture/**/input.js")]
+#[testing::fixture("tests/fixture/functions/input.js")]
 fn exec(input: PathBuf) {
   let output = input.with_file_name("output.js");
   test_fixture(

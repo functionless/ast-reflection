@@ -1,12 +1,8 @@
 use std::collections::HashSet;
 
 use crate::{closure_decorator::ClosureDecorator, virtual_machine::VirtualMachine};
+use swc_common::SyntaxContext;
 use swc_plugin::ast::*;
-
-pub enum ArrowOrFunction<'a> {
-  ArrowFunction(&'a ArrowExpr),
-  Function(&'a Function),
-}
 
 pub struct FreeVariableVisitor {
   /**
@@ -17,26 +13,44 @@ pub struct FreeVariableVisitor {
    * A HashSet of discovered free variables.
    */
   free_variables: HashSet<Id>,
+  /**
+   * Whether the visitor is currently in a function (or arrow function).
+   *
+   * Used to identify whether the `this` keyword is a free variable.
+   */
+  in_function: bool,
 }
 
 impl ClosureDecorator {
-  pub fn discover_free_variables(&mut self, func: ArrowOrFunction) -> Vec<Id> {
+  pub fn discover_free_variables<T>(&mut self, node: &T) -> Vec<Id>
+  where
+    T: VisitWith<FreeVariableVisitor>,
+  {
     let mut visitor = FreeVariableVisitor {
       vm: VirtualMachine::new(),
       // outer_names, // O(1) clone
       free_variables: HashSet::new(),
+      in_function: false,
     };
 
-    match func {
-      ArrowOrFunction::ArrowFunction(arrow) => {
-        arrow.visit_with(&mut visitor);
-      }
-      ArrowOrFunction::Function(function) => {
-        function.visit_with(&mut visitor);
-      }
-    };
+    node.visit_with(&mut visitor);
 
-    let mut free_variables = visitor.free_variables.into_iter().collect::<Vec<Id>>();
+    let mut seen: HashSet<Id> = HashSet::new();
+
+    // TODO: more efficient way of .distinct()
+    let mut free_variables = visitor
+      .free_variables
+      .into_iter()
+      .filter(|v| {
+        if seen.contains(v) {
+          false
+        } else {
+          seen.insert(v.clone());
+          true
+        }
+      })
+      .collect::<Vec<Id>>();
+
     free_variables.sort_by(|a, b| a.0.cmp(&b.0));
     free_variables
   }
@@ -44,20 +58,45 @@ impl ClosureDecorator {
 
 // read-only visitor that will discover free variables
 impl Visit for FreeVariableVisitor {
-  fn visit_block_stmt(&mut self, block: &BlockStmt) {
-    self.vm.enter();
+  fn visit_constructor(&mut self, constructor: &Constructor) {
+    self.vm.bind_all_constructor_params(&constructor.params);
+    constructor.params.visit_with(self);
+    constructor.body.visit_with(self);
+  }
 
-    self.vm.bind_block(block);
+  fn visit_pat(&mut self, pat: &Pat) {
+    match pat {
+      // only look for free variables in the assigned value
+      // identifiers found in destructuring syntax must be ignored
+      Pat::Assign(assign) => assign.right.as_ref().visit_with(self),
+      _ => {}
+    }
+  }
 
-    block.visit_children_with(self);
+  fn visit_class_prop(&mut self, class_member: &ClassProp) {
+    match &class_member.key {
+      PropName::Computed(expr) => {
+        expr.visit_with(self);
+      }
+      _ => {}
+    }
+    class_member.value.visit_with(self);
+  }
 
-    self.vm.exit();
+  fn visit_class_method(&mut self, method: &ClassMethod) {
+    method.function.visit_with(self);
   }
 
   fn visit_arrow_expr(&mut self, arrow: &ArrowExpr) {
     self.vm.enter();
 
+    let prev_in_function = self.in_function;
+
+    self.in_function = false;
+
     self.vm.bind_all_pats(&arrow.params);
+
+    arrow.params.visit_with(self);
 
     match &arrow.body {
       BlockStmtOrExpr::Expr(expr) => {
@@ -69,16 +108,24 @@ impl Visit for FreeVariableVisitor {
       }
     }
 
+    self.in_function = prev_in_function;
+
     self.vm.exit();
   }
 
   fn visit_function(&mut self, function: &Function) {
     self.vm.enter();
 
+    let prev_in_function = self.in_function;
+
+    self.in_function = true;
+
     // greedily bind all of the parameters into the block scope (any functions within the default arguments ca)
     // a default arrow function can access any of the parameters
     // function foo(a, b = () => a) {}
     self.vm.bind_all_params(&function.params);
+
+    function.params.visit_with(self);
 
     match &function.body {
       Some(body) => {
@@ -104,7 +151,28 @@ impl Visit for FreeVariableVisitor {
       _ => {}
     }
 
+    self.in_function = prev_in_function;
+
     self.vm.exit();
+  }
+
+  fn visit_block_stmt(&mut self, block: &BlockStmt) {
+    self.vm.enter();
+
+    self.vm.bind_block(block);
+
+    block.visit_children_with(self);
+
+    self.vm.exit();
+  }
+
+  fn visit_this_expr(&mut self, _this: &ThisExpr) {
+    if !self.in_function {
+      // if we're in an arrow function, then `this` is a free variable
+      self
+        .free_variables
+        .insert((js_word!("this"), SyntaxContext::from_u32(0)));
+    }
   }
 
   fn visit_var_declarator(&mut self, var: &VarDeclarator) {
