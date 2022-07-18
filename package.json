@@ -7,9 +7,9 @@
   "keywords": [
     "swc-plugin"
   ],
-  "main": "target/wasm32-wasi/release/my-first-plugin.wasm",
+  "main": "target/wasm32-wasi/release/swc_closure.wasm",
   "scripts": {
-    "prepublishOnly": "cargo build --release"
+    "release": "cargo build --release --target wasm32-wasi"
   },
   "files": []
 }

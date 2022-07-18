@@ -1,8 +1,11 @@
 [package]
-name = "nodejs_closure_serializer"
+name = "swc_closure"
 version = "0.1.0"
 edition = "2021"
 include = ["Cargo.toml", "src/**/*.rs"]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 serde = "1"
