@@ -1,7 +1,3 @@
-// unstable API, but is the most efficient way to filter a vec in place
-// https://github.com/rust-lang/rust/issues/43244
-#![feature(drain_filter)]
-
 use closure_decorator::ClosureDecorator;
 use swc_common::Mark;
 use swc_ecma_visit::{Fold, VisitMut};

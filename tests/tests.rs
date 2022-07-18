@@ -1,5 +1,5 @@
-use nodejs_closure_serializer::wrap;
 use std::path::PathBuf;
+use swc_closure::wrap;
 use swc_common::{chain, Mark};
 use swc_ecma_transforms_base::resolver;
 
