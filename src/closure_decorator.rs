@@ -140,7 +140,7 @@ impl VisitMut for ClosureDecorator {
 
         if !free_variables.is_empty() {
           // wrap the closure in a decorator call
-          let call = Expr::Call(register_closure_call(
+          let call = Expr::Call(register_free_variables_call_expr(
             Box::new(Expr::Arrow(arrow.take())),
             free_variables,
           ));
@@ -157,7 +157,7 @@ impl VisitMut for ClosureDecorator {
 
         if !free_variables.is_empty() {
           // wrap the Function with a call to global.__fnl_func to
-          let call = Expr::Call(register_closure_call(
+          let call = Expr::Call(register_free_variables_call_expr(
             Box::new(Expr::Fn(FnExpr {
               ident: func.ident.take(),
               function: func.function.take(),
@@ -197,7 +197,7 @@ impl ClosureDecorator {
 }
 fn register_closure_stmt(expr: Expr, free_variables: Vec<Id>) -> Stmt {
   Stmt::Expr(ExprStmt {
-    expr: Box::new(Expr::Call(register_closure_call(
+    expr: Box::new(Expr::Call(register_free_variables_call_expr(
       Box::new(expr),
       free_variables,
     ))),
@@ -205,10 +205,7 @@ fn register_closure_stmt(expr: Expr, free_variables: Vec<Id>) -> Stmt {
   })
 }
 
-/**
- * global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
- */
-fn register_closure_call(expr: Box<Expr>, free_variables: Vec<Id>) -> CallExpr {
+fn register_free_variables_call_expr(expr: Box<Expr>, free_variables: Vec<Id>) -> CallExpr {
   // global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
   CallExpr {
     span: DUMMY_SP,
