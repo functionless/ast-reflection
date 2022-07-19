@@ -10,81 +10,21 @@ class StaticBlocks {
         ()=>{
             i, a, c, e, f, g, h, j, k, l, m, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
         }, __filename, ()=>[
-                [
-                    "a",
-                    1,
-                    a
-                ],
-                [
-                    "block_scoped_arrow_expr",
-                    1,
-                    block_scoped_arrow_expr
-                ],
-                [
-                    "block_scoped_func_expr",
-                    1,
-                    block_scoped_func_expr
-                ],
-                [
-                    "c",
-                    1,
-                    c
-                ],
-                [
-                    "e",
-                    1,
-                    e
-                ],
-                [
-                    "f",
-                    1,
-                    f
-                ],
-                [
-                    "g",
-                    1,
-                    g
-                ],
-                [
-                    "h",
-                    1,
-                    h
-                ],
-                [
-                    "hoisted_func",
-                    1,
-                    hoisted_func
-                ],
-                [
-                    "hoisted_var",
-                    1,
-                    hoisted_var
-                ],
-                [
-                    "i",
-                    1,
-                    i
-                ],
-                [
-                    "j",
-                    1,
-                    j
-                ],
-                [
-                    "k",
-                    1,
-                    k
-                ],
-                [
-                    "l",
-                    1,
-                    l
-                ],
-                [
-                    "m",
-                    1,
-                    m
-                ]
+                a,
+                block_scoped_arrow_expr,
+                block_scoped_func_expr,
+                c,
+                e,
+                f,
+                g,
+                h,
+                hoisted_func,
+                hoisted_var,
+                i,
+                j,
+                k,
+                l,
+                m
             ]);
     }
     static{
@@ -92,11 +32,7 @@ class StaticBlocks {
         ()=>{
             i;
         }, __filename, ()=>[
-                [
-                    "i",
-                    1,
-                    i
-                ]
+                i
             ]);
         (i)=>{
             i;
@@ -106,11 +42,7 @@ class StaticBlocks {
         let i1 = 0;
         global.__fnl_func(// capture static-block-scoped i that shadows module scoped i
         ()=>i1, __filename, ()=>[
-                [
-                    "i",
-                    3,
-                    i1
-                ]
+                i1
             ]);
         (i)=>i;
     }
@@ -119,11 +51,7 @@ class StaticBlocks {
         {
             global.__fnl_func(// capture static-block-scoped i  that shadows module scoped i
             ()=>i2, __filename, ()=>[
-                    [
-                        "i",
-                        5,
-                        i2
-                    ]
+                    i2
                 ]);
             (i)=>i;
         }
@@ -133,11 +61,7 @@ class StaticBlocks {
             let i3 = 0;
             global.__fnl_func(// capture block-scoped i
             ()=>i3, __filename, ()=>[
-                    [
-                        "i",
-                        7,
-                        i3
-                    ]
+                    i3
                 ]);
             (i)=>i;
         }
@@ -165,11 +89,7 @@ class StaticFunctionDecls {
     }
     static{
         global.__fnl_func(this.prototype.a, __filename, ()=>[
-                [
-                    "i",
-                    1,
-                    i
-                ]
+                i
             ]);
     }
 }
@@ -177,11 +97,7 @@ class StaticFuncExpr {
     static a = global.__fnl_func(function() {
         i;
     }, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ]);
     static b = function(i) {
         i;
@@ -200,11 +116,7 @@ class StaticFuncExpr {
     };
     static{
         global.__fnl_func(this, __filename, ()=>[
-                [
-                    "i",
-                    1,
-                    i
-                ]
+                i
             ]);
     }
 }
@@ -212,11 +124,7 @@ class StaticArrowExpr {
     static a = global.__fnl_func(()=>{
         i;
     }, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ]);
     static b = (i)=>{
         i;
@@ -235,11 +143,7 @@ class StaticArrowExpr {
     };
     static{
         global.__fnl_func(this, __filename, ()=>[
-                [
-                    "i",
-                    1,
-                    i
-                ]
+                i
             ]);
     }
 }

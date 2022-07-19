@@ -9,71 +9,19 @@ const block_scoped_func_expr = function() {};
 global.__fnl_func(()=>{
     a, c, e, f, g, h, j, k, l, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
 }, __filename, ()=>[
-        [
-            "a",
-            1,
-            a
-        ],
-        [
-            "block_scoped_arrow_expr",
-            1,
-            block_scoped_arrow_expr
-        ],
-        [
-            "block_scoped_func_expr",
-            1,
-            block_scoped_func_expr
-        ],
-        [
-            "c",
-            1,
-            c
-        ],
-        [
-            "e",
-            1,
-            e
-        ],
-        [
-            "f",
-            1,
-            f
-        ],
-        [
-            "g",
-            1,
-            g
-        ],
-        [
-            "h",
-            1,
-            h
-        ],
-        [
-            "hoisted_func",
-            1,
-            hoisted_func
-        ],
-        [
-            "hoisted_var",
-            1,
-            hoisted_var
-        ],
-        [
-            "j",
-            1,
-            j
-        ],
-        [
-            "k",
-            1,
-            k
-        ],
-        [
-            "l",
-            1,
-            l
-        ]
+        a,
+        block_scoped_arrow_expr,
+        block_scoped_func_expr,
+        c,
+        e,
+        f,
+        g,
+        h,
+        hoisted_func,
+        hoisted_var,
+        j,
+        k,
+        l
     ]);
 // arrow expr where parameters shadow all variables
 (a, c, e, f, g, h, j, k, l, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func)=>{
@@ -88,16 +36,8 @@ global.__fnl_func(()=>{
     ({})[a];
     [][b];
 }, __filename, ()=>[
-        [
-            "a",
-            1,
-            a
-        ],
-        [
-            "b",
-            4,
-            b
-        ]
+        a,
+        b
     ]);
 // arrow expr capturing a variable with a spread expression
 global.__fnl_func(()=>{
@@ -108,16 +48,8 @@ global.__fnl_func(()=>{
         ...d
     ];
 }, __filename, ()=>[
-        [
-            "c",
-            1,
-            c
-        ],
-        [
-            "d",
-            4,
-            d
-        ]
+        c,
+        d
     ]);
 // arrow expr capturing variables in property chains
 global.__fnl_func(()=>{
@@ -125,31 +57,11 @@ global.__fnl_func(()=>{
     b.prop[c];
     d.prop?.[e];
 }, __filename, ()=>[
-        [
-            "a",
-            1,
-            a
-        ],
-        [
-            "b",
-            4,
-            b
-        ],
-        [
-            "c",
-            1,
-            c
-        ],
-        [
-            "d",
-            4,
-            d
-        ],
-        [
-            "e",
-            1,
-            e
-        ]
+        a,
+        b,
+        c,
+        d,
+        e
     ]);
 // arrow expr capturing variables as call arguments
 global.__fnl_func(()=>{
@@ -158,41 +70,13 @@ global.__fnl_func(()=>{
     c(d.prop);
     e(f[g]);
 }, __filename, ()=>[
-        [
-            "a",
-            1,
-            a
-        ],
-        [
-            "b",
-            4,
-            b
-        ],
-        [
-            "c",
-            1,
-            c
-        ],
-        [
-            "d",
-            4,
-            d
-        ],
-        [
-            "e",
-            1,
-            e
-        ],
-        [
-            "f",
-            1,
-            f
-        ],
-        [
-            "g",
-            1,
-            g
-        ]
+        a,
+        b,
+        c,
+        d,
+        e,
+        f,
+        g
     ]);
 var hoisted_var;
 function hoisted_func() {}
@@ -208,11 +92,7 @@ let i;
     ()=>{
         i; // i#3
     }, __filename, ()=>[
-            [
-                "i",
-                6,
-                i
-            ]
+            i
         ]);
 };
 // capture a hoisted var
@@ -221,11 +101,7 @@ let i;
         global.__fnl_func(()=>{
             a; // capture hoisted free variable, a
         }, __filename, ()=>[
-                [
-                    "a",
-                    7,
-                    a
-                ]
+                a
             ]);
     }
     var a;
@@ -235,17 +111,9 @@ let i;
     const capture_default_reference_to_param_in_closure = global.__fnl_func((a = global.__fnl_func(()=>{
         i; // i#1
     }, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ]))=>{}, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ]);
     const dont_capture_let_shadowed_by_param = (i)=>{
         i;
@@ -254,71 +122,23 @@ let i;
     const dont_capture_default_reference_to_param_in_closure = (i, a = global.__fnl_func(()=>{
         i;
     }, __filename, ()=>[
-            [
-                "i",
-                12,
-                i
-            ]
+            i
         ]))=>{};
     const arg_destructuring_test = (i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m)=>{
         return global.__fnl_func(()=>{
             i, a, c, e, f, g, h, j, k, l, m;
         }, __filename, ()=>[
-                [
-                    "a",
-                    13,
-                    a
-                ],
-                [
-                    "c",
-                    13,
-                    c
-                ],
-                [
-                    "e",
-                    13,
-                    e
-                ],
-                [
-                    "f",
-                    13,
-                    f
-                ],
-                [
-                    "g",
-                    13,
-                    g
-                ],
-                [
-                    "h",
-                    13,
-                    h
-                ],
-                [
-                    "i",
-                    13,
-                    i
-                ],
-                [
-                    "j",
-                    13,
-                    j
-                ],
-                [
-                    "k",
-                    13,
-                    k
-                ],
-                [
-                    "l",
-                    13,
-                    l
-                ],
-                [
-                    "m",
-                    13,
-                    m
-                ]
+                a,
+                c,
+                e,
+                f,
+                g,
+                h,
+                i,
+                j,
+                k,
+                l,
+                m
             ]);
     };
 }// function expressions
@@ -326,17 +146,9 @@ let i;
     const capture_default_reference_to_param_in_closure1 = global.__fnl_func(function(a = global.__fnl_func(function() {
         i; // i#1
     }, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ])) {}, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ]);
     const dont_capture_let_shadowed_by_param1 = function(i) {
         i;
@@ -345,90 +157,34 @@ let i;
     const dont_capture_default_reference_to_param_in_closure1 = function(i, a = global.__fnl_func(function() {
         i;
     }, __filename, ()=>[
-            [
-                "i",
-                18,
-                i
-            ]
+            i
         ])) {};
     const arg_destructuring_test1 = function(i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m) {
         return global.__fnl_func(function() {
             i, a, c, e, f, g, h, j, k, l, m;
         }, __filename, ()=>[
-                [
-                    "a",
-                    19,
-                    a
-                ],
-                [
-                    "c",
-                    19,
-                    c
-                ],
-                [
-                    "e",
-                    19,
-                    e
-                ],
-                [
-                    "f",
-                    19,
-                    f
-                ],
-                [
-                    "g",
-                    19,
-                    g
-                ],
-                [
-                    "h",
-                    19,
-                    h
-                ],
-                [
-                    "i",
-                    19,
-                    i
-                ],
-                [
-                    "j",
-                    19,
-                    j
-                ],
-                [
-                    "k",
-                    19,
-                    k
-                ],
-                [
-                    "l",
-                    19,
-                    l
-                ],
-                [
-                    "m",
-                    19,
-                    m
-                ]
+                a,
+                c,
+                e,
+                f,
+                g,
+                h,
+                i,
+                j,
+                k,
+                l,
+                m
             ]);
     };
 }// function declarations
 {
     global.__fnl_func(capture_default_reference_to_param_in_closure2, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ]);
     function capture_default_reference_to_param_in_closure2(a = global.__fnl_func(()=>{
         i; // i#1
     }, __filename, ()=>[
-            [
-                "i",
-                1,
-                i
-            ]
+            i
         ])) {}
     ;
     function dont_capture_let_shadowed_by_param2(i) {
@@ -440,72 +196,24 @@ let i;
     function dont_capture_default_reference_to_param_in_closure2(i, a = global.__fnl_func(()=>{
         i;
     }, __filename, ()=>[
-            [
-                "i",
-                24,
-                i
-            ]
+            i
         ])) {}
     ;
     function arg_destructuring_test2(i, { a , b: c , d: [e] , ...f }, [g, { h , i: j  }, [k], ...l], ...m) {
         return global.__fnl_func(()=>{
             i, a, c, e, f, g, h, j, k, l, m;
         }, __filename, ()=>[
-                [
-                    "a",
-                    25,
-                    a
-                ],
-                [
-                    "c",
-                    25,
-                    c
-                ],
-                [
-                    "e",
-                    25,
-                    e
-                ],
-                [
-                    "f",
-                    25,
-                    f
-                ],
-                [
-                    "g",
-                    25,
-                    g
-                ],
-                [
-                    "h",
-                    25,
-                    h
-                ],
-                [
-                    "i",
-                    25,
-                    i
-                ],
-                [
-                    "j",
-                    25,
-                    j
-                ],
-                [
-                    "k",
-                    25,
-                    k
-                ],
-                [
-                    "l",
-                    25,
-                    l
-                ],
-                [
-                    "m",
-                    25,
-                    m
-                ]
+                a,
+                c,
+                e,
+                f,
+                g,
+                h,
+                i,
+                j,
+                k,
+                l,
+                m
             ]);
     }
     ;

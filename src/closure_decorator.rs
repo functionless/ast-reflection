@@ -231,39 +231,16 @@ fn register_free_variables_call_expr(expr: Box<Expr>, free_variables: Vec<Id>) -
             elems: free_variables
               .iter()
               .map(|v| {
-                Expr::Array(ArrayLit {
-                  elems: vec![
-                    Expr::Lit(Lit::Str(Str {
-                      raw: None,
-                      span: DUMMY_SP,
-                      value: v.0.clone(),
-                    })),
-                    Expr::Lit(Lit::Num(Number {
-                      span: DUMMY_SP,
-                      value: v.1.as_u32() as f64,
-                      raw: None,
-                    })),
-                    Expr::Ident(quote_ident!(
-                      Span {
-                        hi: BytePos(0),
-                        lo: BytePos(0),
-                        // this is very important - we must attach the SyntaxContext of the free variable's origin
-                        // or else: when rust renames identifiers, it will skip this one, leaving us with a broken references
-                        ctxt: v.1,
-                      },
-                      *v.0
-                    )),
-                  ]
-                  .iter()
-                  .map(|expr| {
-                    Some(ExprOrSpread {
-                      spread: None,
-                      expr: Box::new(expr.clone()),
-                    })
-                  })
-                  .collect(),
-                  span: DUMMY_SP,
-                })
+                Expr::Ident(quote_ident!(
+                  Span {
+                    hi: BytePos(0),
+                    lo: BytePos(0),
+                    // this is very important - we must attach the SyntaxContext of the free variable's origin
+                    // or else: when rust renames identifiers, it will skip this one, leaving us with a broken references
+                    ctxt: v.1,
+                  },
+                  *v.0
+                ))
               })
               .map(|expr| {
                 Some(ExprOrSpread {
