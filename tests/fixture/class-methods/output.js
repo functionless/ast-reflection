@@ -11,21 +11,24 @@ class A {
         a, c, e, f, g, h, j, k, l, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
     }
     static{
-        global.__fnl_func(this.prototype.capture, __filename, ()=>[
-                a,
-                block_scoped_arrow_expr,
-                block_scoped_func_expr,
-                c,
-                e,
-                f,
-                g,
-                h,
-                hoisted_func,
-                hoisted_var,
-                j,
-                k,
-                l
-            ]);
+        this.prototype.capture["[[Closure]]"] = [
+            __filename,
+            ()=>[
+                    a,
+                    block_scoped_arrow_expr,
+                    block_scoped_func_expr,
+                    c,
+                    e,
+                    f,
+                    g,
+                    h,
+                    hoisted_func,
+                    hoisted_var,
+                    j,
+                    k,
+                    l
+                ]
+        ];
     }
 }
 var hoisted_var;

@@ -6,63 +6,98 @@ const block_scoped_func_expr = function() {};
 let i = 0;
 class StaticBlocks {
     static{
-        global.__fnl_func(// capture all module-scoped variables
-        ()=>{
-            i, a, c, e, f, g, h, j, k, l, m, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
-        }, __filename, ()=>[
-                a,
-                block_scoped_arrow_expr,
-                block_scoped_func_expr,
-                c,
-                e,
-                f,
-                g,
-                h,
-                hoisted_func,
-                hoisted_var,
-                i,
-                j,
-                k,
-                l,
-                m
-            ]);
+        (()=>{
+            const c1 = // capture all module-scoped variables
+            ()=>{
+                i, a, c, e, f, g, h, j, k, l, m, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
+            };
+            c1["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        a,
+                        block_scoped_arrow_expr,
+                        block_scoped_func_expr,
+                        c,
+                        e,
+                        f,
+                        g,
+                        h,
+                        hoisted_func,
+                        hoisted_var,
+                        i,
+                        j,
+                        k,
+                        l,
+                        m
+                    ]
+            ];
+            return c1;
+        })();
     }
     static{
-        global.__fnl_func(// capture module-scoped i
-        ()=>{
-            i;
-        }, __filename, ()=>[
-                i
-            ]);
+        (()=>{
+            const c = // capture module-scoped i
+            ()=>{
+                i;
+            };
+            c["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        i
+                    ]
+            ];
+            return c;
+        })();
         (i)=>{
             i;
         };
     }
     static{
         let i1 = 0;
-        global.__fnl_func(// capture static-block-scoped i that shadows module scoped i
-        ()=>i1, __filename, ()=>[
-                i1
-            ]);
+        (()=>{
+            const c = // capture static-block-scoped i that shadows module scoped i
+            ()=>i1;
+            c["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        i1
+                    ]
+            ];
+            return c;
+        })();
         (i)=>i;
     }
     static{
         let i2 = 0;
         {
-            global.__fnl_func(// capture static-block-scoped i  that shadows module scoped i
-            ()=>i2, __filename, ()=>[
-                    i2
-                ]);
+            (()=>{
+                const c = // capture static-block-scoped i  that shadows module scoped i
+                ()=>i2;
+                c["[[Closure]]"] = [
+                    __filename,
+                    ()=>[
+                            i2
+                        ]
+                ];
+                return c;
+            })();
             (i)=>i;
         }
     }
     static{
         {
             let i3 = 0;
-            global.__fnl_func(// capture block-scoped i
-            ()=>i3, __filename, ()=>[
-                    i3
-                ]);
+            (()=>{
+                const c = // capture block-scoped i
+                ()=>i3;
+                c["[[Closure]]"] = [
+                    __filename,
+                    ()=>[
+                            i3
+                        ]
+                ];
+                return c;
+            })();
             (i)=>i;
         }
     }
@@ -88,17 +123,27 @@ class StaticFunctionDecls {
         i;
     }
     static{
-        global.__fnl_func(this.prototype.a, __filename, ()=>[
-                i
-            ]);
+        this.prototype.a["[[Closure]]"] = [
+            __filename,
+            ()=>[
+                    i
+                ]
+        ];
     }
 }
 class StaticFuncExpr {
-    static a = global.__fnl_func(function() {
-        i;
-    }, __filename, ()=>[
-            i
-        ]);
+    static a = (()=>{
+        const c = function() {
+            i;
+        };
+        c["[[Closure]]"] = [
+            __filename,
+            ()=>[
+                    i
+                ]
+        ];
+        return c;
+    })();
     static b = function(i) {
         i;
     };
@@ -115,17 +160,27 @@ class StaticFuncExpr {
         i;
     };
     static{
-        global.__fnl_func(this, __filename, ()=>[
-                i
-            ]);
+        this["[[Closure]]"] = [
+            __filename,
+            ()=>[
+                    i
+                ]
+        ];
     }
 }
 class StaticArrowExpr {
-    static a = global.__fnl_func(()=>{
-        i;
-    }, __filename, ()=>[
-            i
-        ]);
+    static a = (()=>{
+        const c = ()=>{
+            i;
+        };
+        c["[[Closure]]"] = [
+            __filename,
+            ()=>[
+                    i
+                ]
+        ];
+        return c;
+    })();
     static b = (i)=>{
         i;
     };
@@ -142,9 +197,12 @@ class StaticArrowExpr {
         i;
     };
     static{
-        global.__fnl_func(this, __filename, ()=>[
-                i
-            ]);
+        this["[[Closure]]"] = [
+            __filename,
+            ()=>[
+                    i
+                ]
+        ];
     }
 }
 var hoisted_var;

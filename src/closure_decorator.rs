@@ -2,7 +2,7 @@ use swc_common::{util::take::Take, DUMMY_SP};
 use swc_common::{BytePos, Span};
 use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
-use swc_plugin::utils::{prepend_stmts, quote_ident};
+use swc_plugin::utils::{prepend_stmts, private_ident, quote_ident};
 
 pub struct ClosureDecorator {}
 
@@ -79,7 +79,7 @@ impl VisitMut for ClosureDecorator {
                   }),
                 },
               }),
-              free_variables,
+              &free_variables,
             ))
           } else {
             None
@@ -105,7 +105,7 @@ impl VisitMut for ClosureDecorator {
     if !constructor_free_variables.is_empty() {
       register_stmts.push(register_closure_stmt(
         Expr::This(ThisExpr { span: DUMMY_SP }),
-        constructor_free_variables,
+        &constructor_free_variables,
       ));
     }
     class.visit_mut_children_with(self);
@@ -139,13 +139,7 @@ impl VisitMut for ClosureDecorator {
         }
 
         if !free_variables.is_empty() {
-          // wrap the closure in a decorator call
-          let call = Expr::Call(register_free_variables_call_expr(
-            Box::new(Expr::Arrow(arrow.take())),
-            free_variables,
-          ));
-
-          *expr = call;
+          *expr = register_closure_sequence(&mut Expr::Arrow(arrow.take()), &free_variables);
         }
       }
       Expr::Fn(func) if func.function.body.is_some() => {
@@ -156,17 +150,7 @@ impl VisitMut for ClosureDecorator {
         func.function.visit_mut_children_with(self);
 
         if !free_variables.is_empty() {
-          // wrap the Function with a call to global.__fnl_func to
-          let call = Expr::Call(register_free_variables_call_expr(
-            Box::new(Expr::Fn(FnExpr {
-              ident: func.ident.take(),
-              function: func.function.take(),
-            })),
-            // decorate the closure with its free variables
-            free_variables,
-          ));
-
-          *expr = call;
+          *expr = register_closure_sequence(&mut Expr::Fn(func.take()), &free_variables);
         }
       }
       _ => {
@@ -187,7 +171,7 @@ impl ClosureDecorator {
         } else {
           Some(register_closure_stmt(
             Expr::Ident(func.ident.clone()),
-            free_variables,
+            &free_variables,
           ))
         }
       }
@@ -195,32 +179,96 @@ impl ClosureDecorator {
     }
   }
 }
-fn register_closure_stmt(expr: Expr, free_variables: Vec<Id>) -> Stmt {
+
+fn register_closure_stmt(expr: Expr, free_variables: &[Id]) -> Stmt {
   Stmt::Expr(ExprStmt {
-    expr: Box::new(Expr::Call(register_free_variables_call_expr(
-      Box::new(expr),
-      free_variables,
-    ))),
+    expr: assign_closure_prop_expr(Box::new(expr), free_variables),
     span: DUMMY_SP,
   })
 }
 
-fn register_free_variables_call_expr(expr: Box<Expr>, free_variables: Vec<Id>) -> CallExpr {
-  // global.__fnl_func((...args) => { ..stmts }, () => ({ ...metadata }))
-  CallExpr {
-    span: DUMMY_SP,
-    callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
-      obj: Box::new(Expr::Ident(quote_ident!("global"))),
-      prop: MemberProp::Ident(quote_ident!("__fnl_func")),
+fn register_closure_sequence(func: &mut Expr, free_variables: &[Id]) -> Expr {
+  let c = private_ident!("c");
+
+  Expr::Call(CallExpr {
+    callee: Callee::Expr(Box::new(Expr::Arrow(ArrowExpr {
+      is_async: false,
+      is_generator: false,
+      params: vec![],
+      return_type: None,
       span: DUMMY_SP,
+      type_params: None,
+      body: BlockStmtOrExpr::BlockStmt(BlockStmt {
+        span: DUMMY_SP,
+        stmts: vec![
+          // const c = function foo() {}
+          Stmt::Decl(Decl::Var(VarDecl {
+            declare: false,
+            kind: VarDeclKind::Const,
+            span: DUMMY_SP,
+            decls: vec![VarDeclarator {
+              definite: false,
+              name: Pat::Ident(BindingIdent {
+                id: c.clone(),
+                type_ann: None,
+              }),
+              span: DUMMY_SP,
+              init: Some(Box::new(func.take())),
+            }],
+          })),
+          // c["[[Closure]]"] = [__filename, () => [a, b, c]]
+          Stmt::Expr(ExprStmt {
+            expr: assign_closure_prop_expr(Box::new(Expr::Ident(c.clone())), free_variables),
+            span: DUMMY_SP,
+          }),
+          // return c;
+          Stmt::Return(ReturnStmt {
+            span: DUMMY_SP,
+            arg: Some(Box::new(Expr::Ident(c.clone()))),
+          }),
+        ],
+      }),
     }))),
-    args: vec![
-      ExprOrSpread { expr, spread: None },
-      ExprOrSpread {
-        expr: Box::new(Expr::Ident(quote_ident!("__filename"))),
+    args: vec![],
+    span: DUMMY_SP,
+    type_args: None,
+  })
+}
+
+fn assign_closure_prop_expr(obj: Box<Expr>, free_variables: &[Id]) -> Box<Expr> {
+  Box::new(Expr::Assign(AssignExpr {
+    left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+      obj,
+      span: DUMMY_SP,
+      prop: MemberProp::Computed(ComputedPropName {
+        expr: Box::new(Expr::Lit(Lit::Str(Str::from("[[Closure]]")))),
+        span: DUMMY_SP,
+      }),
+    }))),
+    op: op!("="),
+    right: Box::new(free_variables_tuple(free_variables)),
+    span: DUMMY_SP,
+  }))
+}
+
+/**
+ * Creates a tuple containing the __filename from which the closure originates
+ * and another closure that produces the free variable values.
+ *
+ * ```ts
+ * [__filename, () => [a, b, c]]
+ * ```
+ */
+fn free_variables_tuple(free_variables: &[Id]) -> Expr {
+  Expr::Array(ArrayLit {
+    span: DUMMY_SP,
+    elems: vec![
+      Some(ExprOrSpread {
         spread: None,
-      },
-      ExprOrSpread {
+        expr: Box::new(Expr::Ident(quote_ident!("__filename"))),
+      }),
+      Some(ExprOrSpread {
+        spread: None,
         expr: Box::new(Expr::Arrow(ArrowExpr {
           is_async: false,
           is_generator: false,
@@ -253,9 +301,7 @@ fn register_free_variables_call_expr(expr: Box<Expr>, free_variables: Vec<Id>) -
           params: vec![],
           return_type: None,
         })),
-        spread: None,
-      },
-    ], // TODO: inject metadata about free variables
-    type_args: None,
-  }
+      }),
+    ],
+  })
 }

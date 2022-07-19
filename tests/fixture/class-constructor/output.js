@@ -17,18 +17,21 @@ const block_scoped_func_expr = function() {};
         l = l;
         m = m;
         static{
-            global.__fnl_func(this, __filename, ()=>[
-                    a,
-                    c,
-                    e,
-                    f,
-                    g,
-                    h,
-                    j,
-                    k,
-                    l,
-                    m
-                ]);
+            this["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        a,
+                        c,
+                        e,
+                        f,
+                        g,
+                        h,
+                        j,
+                        k,
+                        l,
+                        m
+                    ]
+            ];
         }
     }
 }{
@@ -38,22 +41,25 @@ const block_scoped_func_expr = function() {};
             a, c, e, f, g, h, j, k, l, m, block_scoped_arrow_expr, block_scoped_func_expr, hoisted_var, hoisted_func;
         }
         static{
-            global.__fnl_func(this, __filename, ()=>[
-                    a,
-                    block_scoped_arrow_expr,
-                    block_scoped_func_expr,
-                    c,
-                    e,
-                    f,
-                    g,
-                    h,
-                    hoisted_func,
-                    hoisted_var,
-                    j,
-                    k,
-                    l,
-                    m
-                ]);
+            this["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        a,
+                        block_scoped_arrow_expr,
+                        block_scoped_func_expr,
+                        c,
+                        e,
+                        f,
+                        g,
+                        h,
+                        hoisted_func,
+                        hoisted_var,
+                        j,
+                        k,
+                        l,
+                        m
+                    ]
+            ];
         }
     }
 }{
@@ -73,28 +79,31 @@ const block_scoped_func_expr = function() {};
             a, c, e, f, g, h, j, k, l, m;
         }
         static{
-            global.__fnl_func(this, __filename, ()=>[
-                    a,
-                    c,
-                    e,
-                    f,
-                    g,
-                    h,
-                    j,
-                    k,
-                    l,
-                    m,
-                    a,
-                    c,
-                    e,
-                    f,
-                    g,
-                    h,
-                    j,
-                    k,
-                    l,
-                    m
-                ]);
+            this["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        a,
+                        c,
+                        e,
+                        f,
+                        g,
+                        h,
+                        j,
+                        k,
+                        l,
+                        m,
+                        a,
+                        c,
+                        e,
+                        f,
+                        g,
+                        h,
+                        j,
+                        k,
+                        l,
+                        m
+                    ]
+            ];
         }
     }
 }{
@@ -104,16 +113,19 @@ const block_scoped_func_expr = function() {};
             a[c], e?.[f], g(j), j.k(), l?.[m]();
         }
         static{
-            global.__fnl_func(this, __filename, ()=>[
-                    a,
-                    c,
-                    e,
-                    f,
-                    g,
-                    j,
-                    l,
-                    m
-                ]);
+            this["[[Closure]]"] = [
+                __filename,
+                ()=>[
+                        a,
+                        c,
+                        e,
+                        f,
+                        g,
+                        j,
+                        l,
+                        m
+                    ]
+            ];
         }
     }
 }{
