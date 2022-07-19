@@ -5,9 +5,8 @@ use swc_ecma_transforms_base::resolver;
 
 use swc_ecma_parser::{EsConfig, Syntax};
 use swc_ecma_transforms_testing::{test, test_fixture};
-use swc_ecma_visit::Fold;
 
-#[testing::fixture("tests/fixture/functions/input.js")]
+#[testing::fixture("tests/fixture/**/input.js")]
 fn exec(input: PathBuf) {
   let output = input.with_file_name("output.js");
   test_fixture(
@@ -20,7 +19,7 @@ fn exec(input: PathBuf) {
   );
 }
 
-fn test_runner() -> impl Fold {
+fn test_runner() -> impl swc_ecma_visit::Fold {
   let mark = Mark::fresh(Mark::root());
 
   chain!(resolver(Mark::new(), mark, false), wrap(mark))

@@ -2,3 +2,4 @@
 ^target/
 target
 /swc-closure-0.1.0.tgz
+/swc_closure.wasm

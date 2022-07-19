@@ -11,11 +11,12 @@
   "keywords": [
     "swc-plugin"
   ],
-  "main": "target/wasm32-wasi/release/swc_closure.wasm",
+  "main": "swc_closure.wasm",
   "scripts": {
-    "release": "cargo build --release --target wasm32-wasi"
+    "prepublishOnly": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/swc_closure.wasm .",
+    "release": "yarn prepublishOnly"
   },
   "files": [
-    "target/wasm32-wasi/release/swc_closure.wasm"
+    "swc_closure.wasm"
   ]
 }
