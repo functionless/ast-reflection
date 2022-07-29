@@ -4,11 +4,18 @@ use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, private_ident, quote_ident};
 
-pub struct ClosureDecorator {}
+use crate::parse::parse_arrow;
+use crate::virtual_machine::VirtualMachine;
+
+pub struct ClosureDecorator {
+  vm: VirtualMachine,
+}
 
 impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
-    ClosureDecorator {}
+    ClosureDecorator {
+      vm: VirtualMachine::new(),
+    }
   }
 }
 
@@ -122,6 +129,8 @@ impl VisitMut for ClosureDecorator {
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
+        // self.vm.enter();
+
         // analyze the free variable prior to transformation
         let free_variables = self.discover_free_variables(arrow);
 

@@ -1,49 +1,35 @@
 use core::panic;
 
-use strum_macros::AsRefStr;
 use swc_common::DUMMY_SP;
 use swc_plugin::{
   ast::*,
   utils::{private_ident, quote_ident},
 };
 
+use crate::virtual_machine::VirtualMachine;
+use crate::ast::Node;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
 
-const True: Expr = Expr::Lit(Lit::Bool(Bool {
-  span: DUMMY_SP,
-  value: true,
-}));
 
-const False: Expr = Expr::Lit(Lit::Bool(Bool {
-  span: DUMMY_SP,
-  value: false,
-}));
-
-fn undefined() -> Expr {
-  Expr::Ident(Ident {
-    optional: false,
-    span: DUMMY_SP,
-    sym: JsWord::from("undefined"),
-  })
-}
-
-pub fn parse_closure(node: &Expr) -> Box<Expr> {
+pub fn parse_arrow<'a>(vm: &'a VirtualMachine, node: &ArrowExpr) -> Box<Expr> {
   let parser = FunctionlessASTParser {
+    vm,
     import: private_ident!("functionless"),
   };
 
-  parser.parse_expr(node)
+  parser.parse_arrow(node)
 }
 
-pub struct FunctionlessASTParser {
+struct FunctionlessASTParser<'a> {
+  vm: &'a VirtualMachine,
   import: Ident,
 }
 
-impl FunctionlessASTParser {
-  pub fn parse_decl(&self, decl: &Decl) -> Box<Expr> {
+impl <'a> FunctionlessASTParser<'a> {
+  fn parse_decl(&self, decl: &Decl) -> Box<Expr> {
     match decl {
-      Decl::Class(class_decl) => self.newNode(
+      Decl::Class(class_decl) => self.new_node(
         Node::ClassDecl,
         vec![
           //
@@ -53,7 +39,7 @@ impl FunctionlessASTParser {
             .super_class
             .as_ref()
             .map(|sup| self.parse_expr(sup.as_ref()))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
           Box::new(Expr::Array(ArrayLit {
             elems: class_decl
               .class
@@ -69,7 +55,7 @@ impl FunctionlessASTParser {
           })),
         ],
       ),
-      Decl::Fn(function) => self.newNode(
+      Decl::Fn(function) => self.new_node(
         Node::FunctionDecl,
         vec![Box::new(Expr::Array(ArrayLit {
           span: DUMMY_SP,
@@ -79,7 +65,7 @@ impl FunctionlessASTParser {
             .iter()
             .map(|param| {
               Some(ExprOrSpread {
-                expr: self.newNode(
+                expr: self.new_node(
                   Node::ParameterDecl,
                   vec![self.parse_pattern(&param.pat)],
                   
@@ -101,21 +87,21 @@ impl FunctionlessASTParser {
   fn parse_stmt(&self, stmt: &Stmt) -> Box<Expr> {
     match stmt {
       Stmt::Block(block) => self.parse_block(block),
-      Stmt::Break(break_stmt) => self.newNode(Node::BreakStmt, EMPTY_VEC),
-      Stmt::Continue(continue_stmt) => self.newNode(Node::ContinueStmt, EMPTY_VEC),
-      Stmt::Debugger(debugger) => self.newNode(Node::DebuggerStmt, EMPTY_VEC),
+      Stmt::Break(_break_stmt) => self.new_node(Node::BreakStmt, EMPTY_VEC),
+      Stmt::Continue(_continue_stmt) => self.new_node(Node::ContinueStmt, EMPTY_VEC),
+      Stmt::Debugger(_debugger) => self.new_node(Node::DebuggerStmt, EMPTY_VEC),
       Stmt::Decl(decl) => self.parse_decl(decl),
-      Stmt::DoWhile(do_while) => self.newNode(
-        Node::WhileStmt,
+      Stmt::DoWhile(do_while) => self.new_node(
+        Node::DoStmt,
         vec![
-          // condition
-          self.parse_expr(do_while.test.as_ref()),
           // block
           self.parse_stmt(do_while.body.as_ref()),
+          // condition
+          self.parse_expr(do_while.test.as_ref()),
         ],
       ),
-      Stmt::Empty(empty) => self.newNode(Node::EmptyStmt, EMPTY_VEC),
-      Stmt::Expr(expr_stmt) => self.newNode(
+      Stmt::Empty(_empty) => self.new_node(Node::EmptyStmt, EMPTY_VEC),
+      Stmt::Expr(expr_stmt) => self.new_node(
         Node::ExprStmt,
         vec![
           //expr
@@ -123,7 +109,7 @@ impl FunctionlessASTParser {
         ],
       ),
       // TODO
-      Stmt::For(for_stmt) => self.newNode(
+      Stmt::For(for_stmt) => self.new_node(
         Node::ForStmt,
         vec![
           self.parse_stmt(for_stmt.body.as_ref()),
@@ -134,11 +120,11 @@ impl FunctionlessASTParser {
               VarDeclOrExpr::Expr(expr) => self.parse_expr(expr.as_ref()),
               VarDeclOrExpr::VarDecl(var) => self.parse_var_decl(&var),
             })
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
         ], 
       ),
       // for (const left in right)
-      Stmt::ForIn(for_in) => self.newNode(
+      Stmt::ForIn(for_in) => self.new_node(
         Node::ForInStmt,
         vec![
           match &for_in.left {
@@ -150,8 +136,8 @@ impl FunctionlessASTParser {
         ],
       ),
       // for (const left of right)
-      Stmt::ForOf(for_of) => self.newNode(
-        Node::ForInStmt,
+      Stmt::ForOf(for_of) => self.new_node(
+        Node::ForOfStmt,
         vec![
           match &for_of.left {
             VarDeclOrPat::VarDecl(var_decl) => self.parse_var_decl(var_decl),
@@ -161,7 +147,7 @@ impl FunctionlessASTParser {
           self.parse_stmt(for_of.body.as_ref()),
         ],
       ),
-      Stmt::If(if_stmt) => self.newNode(
+      Stmt::If(if_stmt) => self.new_node(
         Node::IfStmt,
         vec![
           // when
@@ -173,25 +159,25 @@ impl FunctionlessASTParser {
             .alt
             .as_ref()
             .map(|alt| self.parse_stmt(alt.as_ref()))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
         ],
       ),
       // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/label
       // for now, we just erase the label
-      Stmt::Labeled(labelled) => self.newNode(
+      Stmt::Labeled(labelled) => self.new_node(
         Node::LabelledStmt,
         vec![self.parse_stmt(&labelled.body)],
       ),
-      Stmt::Return(return_stmt) => self.newNode(
+      Stmt::Return(return_stmt) => self.new_node(
         Node::ReturnStmt,
         vec![match return_stmt.arg.as_ref() {
           Some(arg) => self.parse_expr(&arg),
           // encode an empty `return;` as `return undefined();`
-          None => self.newNode(Node::UndefinedLiteralExpr, EMPTY_VEC),
+          None => self.new_node(Node::UndefinedLiteralExpr, EMPTY_VEC),
         }],
       ),
       // TODO: support switch - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/switch
-      Stmt::Switch(switch) => self.newNode(
+      Stmt::Switch(switch) => self.new_node(
         Node::SwitchStmt,
         vec![
           self.parse_expr(&switch.discriminant),
@@ -202,13 +188,23 @@ impl FunctionlessASTParser {
               .cases
               .iter()
               .map(|case| {
-                let stmts: Vec<Box<Expr>> =
-                  case.cons.iter().map(|stmt| self.parse_stmt(stmt)).collect();
-                //
+                let stmts = Box::new(Expr::Array(ArrayLit {
+                  span: DUMMY_SP,
+                  elems: case.cons.iter().map(|stmt| self.parse_stmt(stmt)).map(|expr| Some(ExprOrSpread {
+                    expr,
+                    spread: None
+                  })).collect()
+                }));
+
                 Some(ExprOrSpread {
                   expr: match case.test.as_ref() {
-                    Some(test) => self.newNode(Node::CaseClause, stmts.clone()),
-                    None => self.newNode(Node::DefaultClause, stmts.clone()),
+                    Some(test) => self.new_node(Node::CaseClause, vec![
+                      self.parse_expr(test),
+                      stmts
+                    ]),
+                    None => self.new_node(Node::DefaultClause, vec![
+                      stmts
+                    ]),
                   },
                   spread: None,
                 })
@@ -217,30 +213,41 @@ impl FunctionlessASTParser {
           })),
         ],
       ),
-      Stmt::Throw(throw) => self.newNode(
+      Stmt::Throw(throw) => self.new_node(
         Node::ThrowStmt,
         vec![self.parse_expr(throw.arg.as_ref())],
       ),
-      Stmt::Try(try_stmt) => self.newNode(
+      Stmt::Try(try_stmt) => self.new_node(
         Node::TryStmt,
         vec![
           self.parse_block(&try_stmt.block),
           try_stmt
             .handler
             .as_ref()
-            .map(|catch| match &catch.param {
-              Some(pat) => self.parse_pattern(pat),
-              None => Box::new(undefined()),
-            })
-            .unwrap_or(Box::new(undefined())),
+            .map(|catch| self.new_node(Node::CatchClause, vec![
+              match &catch.param {
+                Some(pat) => self.new_node(Node::VariableDecl, match pat {
+                  Pat::Assign(assign) => vec![
+                    self.parse_pattern(&assign.left),
+                    self.parse_expr(&assign.right)
+                  ],
+                  _ => vec![
+                    self.parse_pattern(pat)
+                  ]
+                }),
+                None => undefined_expr(),
+              },
+              self.parse_block(&catch.body)
+            ]))
+            .unwrap_or(undefined_expr()),
           try_stmt
             .finalizer
             .as_ref()
             .map(|finalizer| self.parse_block(&finalizer))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
         ],
       ),
-      Stmt::While(while_stmt) => self.newNode(
+      Stmt::While(while_stmt) => self.new_node(
         Node::WhileStmt,
         vec![
           self.parse_expr(while_stmt.test.as_ref()),
@@ -248,7 +255,7 @@ impl FunctionlessASTParser {
         ],
       ),
       // TODO: support with https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with
-      Stmt::With(with) => self.newNode(
+      Stmt::With(with) => self.new_node(
         Node::WithStmt,
         vec![
           self.parse_expr(with.obj.as_ref()),
@@ -258,21 +265,32 @@ impl FunctionlessASTParser {
     }
   }
 
+  fn parse_arrow(&self, arrow: &ArrowExpr) -> Box<Expr> {
+    self.new_node(
+      Node::ArrowFunctionExpr,
+      vec![self.parse_patterns(&arrow.params)],
+    )
+  }
+
   fn parse_expr(&self, expr: &Expr) -> Box<Expr> {
     match expr {
-      Expr::Array(array) => self.newNode(
+      Expr::Array(array) => self.new_node(
         Node::ArrayLiteralExpr,
         array
           .elems
           .iter()
-          .filter_map(|element| element.as_ref().map(|e| self.parse_expr(e.expr.as_ref())))
+          .map(|element| match element {
+            Some(e) => if e.spread.is_some() {
+              self.new_node(Node::SpreadElementExpr, vec![self.parse_expr(e.expr.as_ref())])
+            } else {
+              self.parse_expr(e.expr.as_ref())
+            },
+            None => self.new_node(Node::OmittedExpr, vec![])
+          })
           .collect(),
       ),
-      Expr::Arrow(arrow) => self.newNode(
-        Node::ArrowFunctionExpr,
-        vec![self.parse_patterns(&arrow.params)],
-      ),
-      Expr::Assign(assign) => self.newNode(
+      Expr::Arrow(arrow) => self.parse_arrow(arrow),
+      Expr::Assign(assign) => self.new_node(
         Node::BinaryExpr,
         vec![
           match &assign.left {
@@ -283,32 +301,32 @@ impl FunctionlessASTParser {
             raw: None,
             span: DUMMY_SP,
             value: match assign.op {
-              Assign => JsWord::from("="),
-              AddAssign => JsWord::from("+="),
-              SubAssign => JsWord::from("-="),
-              MulAssign => JsWord::from("*="),
-              DivAssign => JsWord::from("/="),
-              ModAssign => JsWord::from("%="),
-              LShiftAssign => JsWord::from("<<="),
-              RShiftAssign => JsWord::from(">>="),
-              ZeroFillRShiftAssign => JsWord::from(">>>="),
-              BitOrAssign => JsWord::from("|="),
-              BitXorAssign => JsWord::from("^="),
-              BitAndAssign => JsWord::from("&="),
-              ExpAssign => JsWord::from("**="),
-              AndAssign => JsWord::from("&&="),
-              OrAssign => JsWord::from("||="),
-              NullishAssign => JsWord::from("??="),
+              AssignOp::Assign => JsWord::from("="),
+              AssignOp::AddAssign => JsWord::from("+="),
+              AssignOp::SubAssign => JsWord::from("-="),
+              AssignOp::MulAssign => JsWord::from("*="),
+              AssignOp::DivAssign => JsWord::from("/="),
+              AssignOp::ModAssign => JsWord::from("%="),
+              AssignOp::LShiftAssign => JsWord::from("<<="),
+              AssignOp::RShiftAssign => JsWord::from(">>="),
+              AssignOp::ZeroFillRShiftAssign => JsWord::from(">>>="),
+              AssignOp::BitOrAssign => JsWord::from("|="),
+              AssignOp::BitXorAssign => JsWord::from("^="),
+              AssignOp::BitAndAssign => JsWord::from("&="),
+              AssignOp::ExpAssign => JsWord::from("**="),
+              AssignOp::AndAssign => JsWord::from("&&="),
+              AssignOp::OrAssign => JsWord::from("||="),
+              AssignOp::NullishAssign => JsWord::from("??="),
             },
           }))),
           self.parse_expr(assign.right.as_ref()),
         ],
       ),
-      Expr::Await(a_wait) => self.newNode(
+      Expr::Await(a_wait) => self.new_node(
         Node::AwaitExpr,
         vec![self.parse_expr(a_wait.arg.as_ref())],
       ),
-      Expr::Bin(binary_op) => self.newNode(
+      Expr::Bin(binary_op) => self.new_node(
         Node::BinaryExpr,
         vec![
           self.parse_expr(binary_op.left.as_ref()),
@@ -316,31 +334,31 @@ impl FunctionlessASTParser {
             span: DUMMY_SP,
             raw: None,
             value: match binary_op.op {
-              Add => JsWord::from("+"),
-              BitAnd => JsWord::from("&"),
-              BitOr => JsWord::from("|"),
-              BitXor => JsWord::from("^"),
-              Div => JsWord::from("/"),
-              EqEq => JsWord::from("=="),
-              EqEqEq => JsWord::from("==="),
-              Exp => JsWord::from("**"),
-              Gt => JsWord::from(">"),
-              GtEq => JsWord::from(">="),
-              In => JsWord::from("in"),
-              InstanceOf => JsWord::from("instanceof"),
-              LogicalAnd => JsWord::from("&&"),
-              LogicalOr => JsWord::from("||"),
-              LShift => JsWord::from("<<"),
-              Lt => JsWord::from("<"),
-              LtEq => JsWord::from("<="),
-              Mod => JsWord::from("%"),
-              Mul => JsWord::from("*"),
-              NotEq => JsWord::from("!="),
-              NotEqEq => JsWord::from("!=="),
-              NullishCoalescing => JsWord::from("??"),
-              RShift => JsWord::from(">>"),
-              Sub => JsWord::from("-"),
-              ZeroFillRShift => JsWord::from(">>>"),
+              BinaryOp::Add => JsWord::from("+"),
+              BinaryOp::BitAnd => JsWord::from("&"),
+              BinaryOp::BitOr => JsWord::from("|"),
+              BinaryOp::BitXor => JsWord::from("^"),
+              BinaryOp::Div => JsWord::from("/"),
+              BinaryOp::EqEq => JsWord::from("=="),
+              BinaryOp::EqEqEq => JsWord::from("==="),
+              BinaryOp::Exp => JsWord::from("**"),
+              BinaryOp::Gt => JsWord::from(">"),
+              BinaryOp::GtEq => JsWord::from(">="),
+              BinaryOp::In => JsWord::from("in"),
+              BinaryOp::InstanceOf => JsWord::from("instanceof"),
+              BinaryOp::LogicalAnd => JsWord::from("&&"),
+              BinaryOp::LogicalOr => JsWord::from("||"),
+              BinaryOp::LShift => JsWord::from("<<"),
+              BinaryOp::Lt => JsWord::from("<"),
+              BinaryOp::LtEq => JsWord::from("<="),
+              BinaryOp::Mod => JsWord::from("%"),
+              BinaryOp::Mul => JsWord::from("*"),
+              BinaryOp::NotEq => JsWord::from("!="),
+              BinaryOp::NotEqEq => JsWord::from("!=="),
+              BinaryOp::NullishCoalescing => JsWord::from("??"),
+              BinaryOp::RShift => JsWord::from(">>"),
+              BinaryOp::Sub => JsWord::from("-"),
+              BinaryOp::ZeroFillRShift => JsWord::from(">>>"),
             },
           }))),
           self.parse_expr(binary_op.right.as_ref()),
@@ -348,7 +366,7 @@ impl FunctionlessASTParser {
       ),
       Expr::Call(call) => self.parse_callee(&call.callee, &call.args, false),
       // TODO: extract properties from ts-parameters
-      Expr::Class(class_expr) => self.newNode(
+      Expr::Class(class_expr) => self.new_node(
         Node::ClassExpr,
         vec![
           //
@@ -356,13 +374,13 @@ impl FunctionlessASTParser {
             .ident
             .as_ref()
             .map(|i| self.parse_ident(&i))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
           class_expr
             .class
             .super_class
             .as_ref()
             .map(|sup| self.parse_expr(sup.as_ref()))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
           Box::new(Expr::Array(ArrayLit {
             elems: class_expr
               .class
@@ -378,7 +396,7 @@ impl FunctionlessASTParser {
           })),
         ],
       ),
-      Expr::Cond(cond) => self.newNode(
+      Expr::Cond(cond) => self.new_node(
         Node::ConditionExpr,
         vec![
           // when
@@ -389,7 +407,7 @@ impl FunctionlessASTParser {
           self.parse_expr(&cond.alt.as_ref()),
         ],
       ),
-      Expr::Fn(function_expr) => self.newNode(
+      Expr::Fn(function_expr) => self.new_node(
         Node::FunctionExpr,
         vec![
           // params
@@ -397,19 +415,35 @@ impl FunctionlessASTParser {
         ],
       ),
       // TODO: check if is in scope and convert to a ReferenceExpr
-      Expr::Ident(id) => self.parse_ident(id),
-      Expr::Invalid(invalid) => self.newErrorNode("Syntax Error"),
-      Expr::JSXElement(jsx_element) => self.newErrorNode("not sure what to do with JSXElement"),
-      Expr::JSXEmpty(jsx_empty) => self.newErrorNode("not sure what to do with JSXEmpty"),
-      Expr::JSXFragment(jsx_fragment) => self.newErrorNode("not sure what to do with JSXFragment"),
-      Expr::JSXMember(jsx_member) => self.newErrorNode("not sure what to do with JSXMember"),
-      Expr::JSXNamespacedName(jsx_namespace_name) => {
-        self.newErrorNode("not sure what to do with JSXNamespacedName")
+      Expr::Ident(id) => {
+        match self.vm.lookup_ident(id) {
+          // if this is a free variable, then create a new ReferenceExpr(() => ident)
+          Some(_) => self.new_node(Node::ReferenceExpr, vec![
+            Box::new(Expr::Arrow(ArrowExpr {
+              is_async: false,
+              is_generator: false,
+              params: vec![],
+              return_type: None,
+              span: DUMMY_SP,
+              type_params: None,
+              body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(id.clone())))
+            }))
+          ]),
+          None => self.parse_ident(id)
+        }
+      },
+      Expr::Invalid(_invalid) => self.new_error_node("Syntax Error"),
+      Expr::JSXElement(_jsx_element) => self.new_error_node("not sure what to do with JSXElement"),
+      Expr::JSXEmpty(_jsx_empty) => self.new_error_node("not sure what to do with JSXEmpty"),
+      Expr::JSXFragment(_jsx_fragment) => self.new_error_node("not sure what to do with JSXFragment"),
+      Expr::JSXMember(_jsx_member) => self.new_error_node("not sure what to do with JSXMember"),
+      Expr::JSXNamespacedName(_jsx_namespace_name) => {
+        self.new_error_node("not sure what to do with JSXNamespacedName")
       }
       Expr::Lit(literal) => match &literal {
         // not sure what type of node this is, will just error for now
-        Lit::JSXText(_) => self.newErrorNode("not sure what to do with JSXText"),
-        _ => self.newNode(
+        Lit::JSXText(_) => self.new_error_node("not sure what to do with JSXText"),
+        _ => self.new_node(
           match literal {
             Lit::Bool(_) => Node::BooleanLiteralExpr,
             Lit::BigInt(_) => Node::BigIntExpr,
@@ -418,15 +452,15 @@ impl FunctionlessASTParser {
             Lit::Regex(_) => Node::RegexExpr,
             Lit::Str(_) => Node::StringLiteralExpr,
             // impossible to reach here
-            Lit::JSXText(text) => panic!("not sure what to do with JSXText"),
+            Lit::JSXText(_text) => panic!("not sure what to do with JSXText"),
           },
           vec![Box::new(expr.clone())],
           
         ),
       },
       Expr::Member(member) => self.parse_member(member, false),
-      Expr::MetaProp(meta_prop) => self.newErrorNode("MetaProp is not supported"),
-      Expr::New(call) => self.newNode(
+      Expr::MetaProp(_meta_prop) => self.new_error_node("MetaProp is not supported"),
+      Expr::New(call) => self.new_node(
         Node::NewExpr,
         vec![
           //
@@ -444,9 +478,9 @@ impl FunctionlessASTParser {
                       spread: None,
                       expr: if arg.spread.is_some() {
                         // TODO: we can't represent this right now
-                        self.newNode(Node::Argument, vec![])
+                        self.new_node(Node::Argument, vec![])
                       } else {
-                        self.newNode(Node::Argument, vec![])
+                        self.new_node(Node::Argument, vec![])
                       },
                     })
                   })
@@ -456,7 +490,7 @@ impl FunctionlessASTParser {
           })),
         ],
       ),
-      Expr::Object(object) => self.newNode(
+      Expr::Object(object) => self.new_node(
         Node::ObjectLiteralExpr,
         object
           .props
@@ -464,8 +498,8 @@ impl FunctionlessASTParser {
           .map(|prop| match prop {
             PropOrSpread::Prop(prop) => match prop.as_ref() {
               // invalid according to SWC's docs on Prop::Assign
-              Prop::Assign(assign) => panic!("Invalid Syntax in Object Literal"),
-              Prop::Getter(getter) => self.newNode(
+              Prop::Assign(_assign) => panic!("Invalid Syntax in Object Literal"),
+              Prop::Getter(getter) => self.new_node(
                 Node::GetAccessorDecl,
                 vec![
                   self.parse_prop_name(&getter.key),
@@ -473,7 +507,7 @@ impl FunctionlessASTParser {
                 ],
                 
               ),
-              Prop::KeyValue(assign) => self.newNode(
+              Prop::KeyValue(assign) => self.new_node(
                 Node::PropAssignExpr,
                 vec![
                   self.parse_prop_name(&assign.key),
@@ -481,7 +515,7 @@ impl FunctionlessASTParser {
                 ],
                 
               ),
-              Prop::Method(method) => self.newNode(
+              Prop::Method(method) => self.new_node(
                 Node::MethodDecl,
                 vec![
                   //
@@ -491,7 +525,7 @@ impl FunctionlessASTParser {
                 ],
                 
               ),
-              Prop::Setter(setter) => self.newNode(
+              Prop::Setter(setter) => self.new_node(
                 Node::SetAccessorDecl,
                 vec![
                   self.parse_prop_name(&setter.key),
@@ -500,13 +534,13 @@ impl FunctionlessASTParser {
                 ],
                 
               ),
-              Prop::Shorthand(ident) => self.newNode(
+              Prop::Shorthand(ident) => self.new_node(
                 Node::PropAssignExpr,
                 vec![self.parse_ident(ident), self.parse_ident(ident)],
                 
               ),
             },
-            PropOrSpread::Spread(spread) => self.newNode(
+            PropOrSpread::Spread(spread) => self.new_node(
               Node::SpreadAssignExpr,
               vec![self.parse_expr(spread.expr.as_ref())],
               
@@ -518,11 +552,11 @@ impl FunctionlessASTParser {
         OptChainBase::Call(call) => self.parse_call_expr(&call.callee, &call.args, true),
         OptChainBase::Member(member) => self.parse_member(&member, true),
       },
-      Expr::Paren(paren) => self.newNode(
+      Expr::Paren(paren) => self.new_node(
         Node::ParenthesizedExpr,
         vec![self.parse_expr(paren.expr.as_ref())],
       ),
-      Expr::PrivateName(private_name) => self.newNode(
+      Expr::PrivateName(private_name) => self.new_node(
         Node::PrivateIdentifier,
         vec![Box::new(Expr::Lit(Lit::Str(Str {
           raw: None,
@@ -536,7 +570,7 @@ impl FunctionlessASTParser {
         }
         let first = self.parse_expr(seq.exprs.first().unwrap());
         seq.exprs.iter().skip(1).fold(first, |left, right| {
-          self.newNode(
+          self.new_node(
             Node::BinaryExpr,
             vec![
               //
@@ -552,13 +586,13 @@ impl FunctionlessASTParser {
           )
         })
       }
-      Expr::SuperProp(super_prop) => self.newNode(
+      Expr::SuperProp(super_prop) => self.new_node(
         Node::PropAccessExpr,
         vec![
-          self.newNode(Node::SuperKeyword, vec![]),
+          self.new_node(Node::SuperKeyword, vec![]),
           match &super_prop.prop {
             SuperProp::Ident(ident) => self.parse_ident(ident),
-            SuperProp::Computed(comp) => self.newNode(
+            SuperProp::Computed(comp) => self.new_node(
               Node::ComputedPropertyNameExpr,
               vec![self.parse_expr(comp.expr.as_ref())],
               
@@ -566,15 +600,15 @@ impl FunctionlessASTParser {
           },
         ],
       ),
-      Expr::TaggedTpl(tagged_template) => self.newNode(
+      Expr::TaggedTpl(tagged_template) => self.new_node(
         Node::TaggedTemplateExpr,
         vec![
           self.parse_expr(tagged_template.tag.as_ref()),
           self.parse_template(&tagged_template.tpl),
         ],
       ),
-      Expr::This(this) => self.newNode(Node::ThisExpr, vec![Box::new(expr.clone())]),
-      Expr::Tpl(template) => self.newNode(
+      Expr::This(_this) => self.new_node(Node::ThisExpr, vec![Box::new(expr.clone())]),
+      Expr::Tpl(template) => self.new_node(
         Node::TemplateExpr,
         vec![self.parse_template(&template)],
       ),
@@ -589,7 +623,7 @@ impl FunctionlessASTParser {
       // <type>expr // erase <type> - take <expr> only
       Expr::TsTypeAssertion(as_type) => self.parse_expr(&as_type.expr),
       Expr::Unary(unary) => match unary.op {
-        UnaryOp::TypeOf | UnaryOp::Void | UnaryOp::Delete => self.newNode(
+        UnaryOp::TypeOf | UnaryOp::Void | UnaryOp::Delete => self.new_node(
           match unary.op {
             UnaryOp::TypeOf => Node::TypeOfExpr,
             UnaryOp::Void => Node::VoidExpr,
@@ -599,7 +633,7 @@ impl FunctionlessASTParser {
           vec![self.parse_expr(unary.arg.as_ref())],
           
         ),
-        _ => self.newNode(
+        _ => self.new_node(
           Node::UnaryExpr,
           vec![
             // op
@@ -622,7 +656,7 @@ impl FunctionlessASTParser {
           
         ),
       },
-      Expr::Update(update) => self.newNode(
+      Expr::Update(update) => self.new_node(
         if update.prefix {
           Node::UnaryExpr
         } else {
@@ -642,14 +676,14 @@ impl FunctionlessASTParser {
           self.parse_expr(update.arg.as_ref()),
         ],
       ),
-      Expr::Yield(yield_expr) => self.newNode(
+      Expr::Yield(yield_expr) => self.new_node(
         Node::YieldExpr,
         vec![
           yield_expr
             .arg
             .as_ref()
             .map(|expr| self.parse_expr(expr.as_ref()))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
           Box::new(Expr::Lit(Lit::Bool(Bool {
             value: yield_expr.delegate,
             span: DUMMY_SP,
@@ -665,28 +699,13 @@ impl FunctionlessASTParser {
     args: &[ExprOrSpread],
     is_optional: bool,
   ) -> Box<Expr> {
-    self.newNode(
+    self.new_node(
       Node::CallExpr,
       vec![
         //
         self.parse_expr(expr),
-        Box::new(Expr::Array(ArrayLit {
-          span: DUMMY_SP,
-          elems: args
-            .iter()
-            .map(|arg| {
-              Some(ExprOrSpread {
-                spread: None,
-                expr: if arg.spread.is_some() {
-                  // TODO: we can't represent this right now
-                  self.newNode(Node::Argument, vec![])
-                } else {
-                  self.newNode(Node::Argument, vec![])
-                },
-              })
-            })
-            .collect(),
-        })),
+        self.parse_call_args(args),
+        if is_optional { true_expr() } else { false_expr() }
       ],
       
     )
@@ -698,16 +717,17 @@ impl FunctionlessASTParser {
     args: &[ExprOrSpread],
     is_optional: bool,
   ) -> Box<Expr> {
-    self.newNode(
+    self.new_node(
       Node::CallExpr,
       vec![
         //
         match callee {
-          Callee::Super(sup) => self.newNode(Node::SuperKeyword, vec![]),
-          Callee::Import(_) => self.newNode(Node::ImportKeyword, vec![]),
+          Callee::Super(_) => self.new_node(Node::SuperKeyword, vec![]),
+          Callee::Import(_) => self.new_node(Node::ImportKeyword, vec![]),
           Callee::Expr(expr) => self.parse_expr(expr),
         },
         self.parse_call_args(args),
+        if is_optional { true_expr() } else { false_expr() }
       ],
       
     )
@@ -723,9 +743,9 @@ impl FunctionlessASTParser {
             spread: None,
             expr: if arg.spread.is_some() {
               // TODO: we can't represent this right now
-              self.newNode(Node::Argument, vec![])
+              self.new_node(Node::Argument, vec![])
             } else {
-              self.newNode(Node::Argument, vec![])
+              self.new_node(Node::Argument, vec![])
             },
           })
         })
@@ -734,13 +754,16 @@ impl FunctionlessASTParser {
   }
 
   fn parse_member(&self, member: &MemberExpr, is_optional: bool) -> Box<Expr> {
-    self.newNode(
-      Node::PropAccessExpr,
+    self.new_node(
+      match member.prop {
+        MemberProp::Computed(_) =>  Node::ElementAccessExpr,
+        _ =>  Node::PropAccessExpr
+      },
       vec![
         self.parse_expr(member.obj.as_ref()),
         match &member.prop {
           MemberProp::Ident(ident) => self.parse_ident(ident),
-          MemberProp::PrivateName(private_name) => self.newNode(
+          MemberProp::PrivateName(private_name) => self.new_node(
             Node::PrivateIdentifier,
             vec![Box::new(Expr::Lit(Lit::Str(Str {
               raw: None,
@@ -749,16 +772,16 @@ impl FunctionlessASTParser {
             })))],
             
           ),
-          MemberProp::Computed(comp) => self.newNode(
+          MemberProp::Computed(comp) => self.new_node(
             Node::ComputedPropertyNameExpr,
             vec![self.parse_expr(comp.expr.as_ref())],
             
           ),
         },
         if is_optional {
-          Box::new(True)
+          true_expr()
         } else {
-          Box::new(False)
+          false_expr()
         },
       ],
       
@@ -766,7 +789,7 @@ impl FunctionlessASTParser {
   }
 
   fn parse_block(&self, block: &BlockStmt) -> Box<Expr> {
-    self.newNode(
+    self.new_node(
       Node::BlockStmt,
       block
         .stmts
@@ -779,7 +802,7 @@ impl FunctionlessASTParser {
 
   fn parse_class_member(&self, member: &ClassMember) -> Option<Box<Expr>> {
     match member {
-      ClassMember::ClassProp(prop) => Some(self.newNode(
+      ClassMember::ClassProp(prop) => Some(self.new_node(
         Node::PropDecl,
         vec![
           //
@@ -792,10 +815,10 @@ impl FunctionlessASTParser {
             .value
             .as_ref()
             .map(|v| self.parse_expr(v.as_ref()))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
         ],
       )),
-      ClassMember::Constructor(ctor) => Some(self.newNode(
+      ClassMember::Constructor(ctor) => Some(self.new_node(
         Node::ConstructorDecl,
         vec![
           // params
@@ -809,7 +832,7 @@ impl FunctionlessASTParser {
                   expr: match param {
                     ParamOrTsParamProp::Param(p) => self.parse_param(p),
                     ParamOrTsParamProp::TsParamProp(p) => match &p.param {
-                      TsParamPropParam::Ident(i) => self.newNode(
+                      TsParamPropParam::Ident(i) => self.new_node(
                         Node::ParameterDecl,
                         vec![
                           //
@@ -817,7 +840,7 @@ impl FunctionlessASTParser {
                         ],
                         
                       ),
-                      TsParamPropParam::Assign(i) => self.newNode(
+                      TsParamPropParam::Assign(i) => self.new_node(
                         Node::ParameterDecl,
                         vec![
                           self.parse_pattern(i.left.as_ref()),
@@ -837,7 +860,7 @@ impl FunctionlessASTParser {
         ],
       )),
       ClassMember::Empty(_) => None,
-      ClassMember::Method(method) => Some(self.newNode(
+      ClassMember::Method(method) => Some(self.new_node(
         Node::MethodDecl,
         vec![
           //
@@ -846,11 +869,11 @@ impl FunctionlessASTParser {
           self.parse_block(method.function.body.as_ref().unwrap()),
         ],
       )),
-      ClassMember::PrivateMethod(method) => Some(self.newNode(
+      ClassMember::PrivateMethod(method) => Some(self.new_node(
         Node::MethodDecl,
         vec![
           //
-          self.newNode(
+          self.new_node(
             Node::PrivateIdentifier,
             vec![
               //
@@ -866,11 +889,11 @@ impl FunctionlessASTParser {
           self.parse_block(method.function.body.as_ref().unwrap()),
         ],
       )),
-      ClassMember::PrivateProp(prop) => Some(self.newNode(
+      ClassMember::PrivateProp(prop) => Some(self.new_node(
         Node::PropDecl,
         vec![
           //
-          self.newNode(
+          self.new_node(
             Node::PrivateIdentifier,
             vec![
               //
@@ -890,10 +913,10 @@ impl FunctionlessASTParser {
             .value
             .as_ref()
             .map(|v| self.parse_expr(v.as_ref()))
-            .unwrap_or(Box::new(undefined())),
+            .unwrap_or(undefined_expr()),
         ],
       )),
-      ClassMember::StaticBlock(static_block) => Some(self.newNode(
+      ClassMember::StaticBlock(static_block) => Some(self.new_node(
         Node::ClassStaticBlockDecl,
         vec![self.parse_block(&static_block.body)],
       )),
@@ -903,20 +926,20 @@ impl FunctionlessASTParser {
 
   fn parse_prop_name(&self, prop: &PropName) -> Box<Expr> {
     match prop {
-      PropName::BigInt(i) => self.newNode(
+      PropName::BigInt(i) => self.new_node(
         Node::BigIntExpr,
         vec![Box::new(Expr::Lit(Lit::BigInt(i.clone())))],
       ),
-      PropName::Computed(c) => self.newNode(
+      PropName::Computed(c) => self.new_node(
         Node::ComputedPropertyNameExpr,
         vec![self.parse_expr(c.expr.as_ref())],
       ),
       PropName::Ident(i) => self.parse_ident(i),
-      PropName::Num(n) => self.newNode(
+      PropName::Num(n) => self.new_node(
         Node::BigIntExpr,
         vec![Box::new(Expr::Lit(Lit::Num(n.clone())))],
       ),
-      PropName::Str(s) => self.newNode(
+      PropName::Str(s) => self.new_node(
         Node::BigIntExpr,
         vec![Box::new(Expr::Lit(Lit::Str(s.clone())))],
       ),
@@ -924,21 +947,24 @@ impl FunctionlessASTParser {
   }
 
   fn parse_var_decl(&self, var_decl: &VarDecl) -> Box<Expr> {
-    self.newNode(
+    self.new_node(
       Node::VariableStmt,
-      vec![self.newNode(
+      vec![self.new_node(
         Node::VariableDeclList,
         var_decl
           .decls
           .iter()
-          .filter_map(|decl| match &decl.name {
-            Pat::Ident(ident) => Some(self.parse_ident(&ident.id)),
-            _ => None,
-          })
+          .map(|decl| self.parse_var_declarator(decl))
           .collect(),
       )],
       
     )
+  }
+
+  fn parse_var_declarator(&self, decl: &VarDeclarator) -> Box<Expr> {
+    self.new_node(Node::VariableDecl, vec![
+      self.parse_pattern(&decl.name)
+    ])
   }
 
   fn parse_template(&self, tpl: &Tpl) -> Box<Expr> {
@@ -960,7 +986,7 @@ impl FunctionlessASTParser {
   }
 
   fn parse_template_element(&self, element: &TplElement) -> Box<Expr> {
-    self.newNode(
+    self.new_node(
       Node::StringLiteralExpr,
       vec![
         //
@@ -975,9 +1001,9 @@ impl FunctionlessASTParser {
   }
 
   fn parse_ident(&self, ident: &Ident) -> Box<Expr> {
-    self.newNode(
+    self.new_node(
       Node::Identifier,
-      vec![self.newNode(
+      vec![self.new_node(
         Node::StringLiteralExpr,
         vec![Box::new(Expr::Lit(Lit::Str(Str {
           raw: None,
@@ -1025,44 +1051,43 @@ impl FunctionlessASTParser {
 
   fn parse_pattern(&self, pat: &Pat) -> Box<Expr> {
     match pat {
-      Pat::Array(array_binding) => self.newNode(
+      Pat::Array(array_binding) => self.new_node(
         Node::ArrayBinding,
         array_binding
           .elems
           .iter()
-          .filter_map(|e| e.as_ref())
           .map(|elem| match elem {
-            Pat::Ident(ident) => self.newNode(
+            Some(pat @ Pat::Ident(_)) => self.new_node(
               Node::BindingElem,
-              vec![self.parse_pattern(&elem), Box::new(False)],
-              
+              vec![self.parse_pattern(&pat), false_expr()],
             ),
-            _ => self.parse_pattern(&elem),
+            Some(pat)=> self.parse_pattern(pat),
+            None => undefined_expr(),
           })
           .collect(),
       ),
-      Pat::Object(object_binding) => self.newNode(
+      Pat::Object(object_binding) => self.new_node(
         Node::ObjectBinding,
         object_binding
           .props
           .iter()
           .map(|prop| match prop {
-            ObjectPatProp::Assign(assign) => self.newNode(
+            ObjectPatProp::Assign(assign) => self.new_node(
               Node::BindingElem,
               match &assign.value {
                 // {key: value}
                 Some(value) => vec![
                   self.parse_expr(value.as_ref()),
-                  Box::new(False),
+                  false_expr(),
                   Box::new(Expr::Ident(assign.key.clone())),
                 ],
                 // {key}
-                None => vec![Box::new(Expr::Ident(assign.key.clone())), Box::new(False)],
+                None => vec![Box::new(Expr::Ident(assign.key.clone())), false_expr()],
               },
               
             ),
             // {key: value}
-            ObjectPatProp::KeyValue(kv) => self.newNode(
+            ObjectPatProp::KeyValue(kv) => self.new_node(
               Node::BindingElem,
               vec![
                 match kv.value.as_ref() {
@@ -1071,43 +1096,43 @@ impl FunctionlessASTParser {
                   Pat::Assign(assign) => self.parse_pattern(assign.left.as_ref()),
                   value => self.parse_pattern(value),
                 },
-                Box::new(False),
+                false_expr(),
                 self.parse_prop_name(&kv.key),
                 match kv.value.as_ref() {
                   // if this is an assign patter, e.g. `{key = value}`
                   // then parse `value` as the `BindingElement.initializer` in FunctionlessAST
                   Pat::Assign(assign) => self.parse_expr(assign.right.as_ref()),
-                  _ => Box::new(undefined()),
+                  _ => undefined_expr(),
                 },
               ],
               
             ),
             // { ...rest }
-            ObjectPatProp::Rest(rest) => self.newNode(
+            ObjectPatProp::Rest(rest) => self.new_node(
               Node::BindingElem,
-              vec![self.parse_pattern(&rest.arg), Box::new(True)],
+              vec![self.parse_pattern(&rest.arg), true_expr()],
               
             ),
           })
           .collect(),
       ),
-      Pat::Assign(assign) => self.newNode(
+      Pat::Assign(assign) => self.new_node(
         Node::BindingElem,
         vec![
           self.parse_pattern(assign.left.as_ref()),
-          Box::new(False),
-          Box::new(undefined()),
+          false_expr(),
+          undefined_expr(),
           self.parse_expr(assign.right.as_ref()),
         ],
       ),
       Pat::Expr(expr) => self.parse_expr(expr),
       Pat::Ident(ident) => self.parse_ident(ident),
-      Pat::Invalid(invalid) => panic!("Invalid Syntax"),
-      Pat::Rest(rest) => self.newNode(Node::BindingElem, vec![]),
+      Pat::Invalid(_invalid) => self.new_error_node("Invalid Node"),
+      Pat::Rest(rest) => self.new_node(Node::BindingElem, vec![]),
     }
   }
 
-  fn newNode(&self, kind: Node, args: Vec<Box<Expr>>) -> Box<Expr> {
+  fn new_node(&self, kind: Node, args: Vec<Box<Expr>>) -> Box<Expr> {
     Box::new(Expr::Call(CallExpr {
       callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
         obj: Box::new(Expr::Ident(self.import.clone())),
@@ -1126,8 +1151,8 @@ impl FunctionlessASTParser {
     }))
   }
 
-  fn newErrorNode(&self, message: &str) -> Box<Expr> {
-    self.newNode(
+  fn new_error_node(&self, message: &str) -> Box<Expr> {
+    self.new_node(
       Node::Err,
       vec![Box::new(Expr::Lit(Lit::Str(Str {
         raw: None,
@@ -1138,88 +1163,24 @@ impl FunctionlessASTParser {
   }
 }
 
-#[derive(AsRefStr)]
-enum Node {
-  Err,
-  // Expr
-  Argument,
-  ArrayLiteralExpr,
-  ArrowFunctionExpr,
-  AwaitExpr,
-  BigIntExpr,
-  BinaryExpr,
-  BooleanLiteralExpr,
-  CallExpr,
-  ClassExpr,
-  ComputedPropertyNameExpr,
-  ConditionExpr,
-  DeleteExpr,
-  ElementAccessExpr,
-  FunctionExpr,
-  Identifier,
-  NewExpr,
-  NullLiteralExpr,
-  NumberLiteralExpr,
-  ObjectLiteralExpr,
-  ParenthesizedExpr,
-  PostfixUnaryExpr,
-  PrivateIdentifier,
-  PromiseArrayExpr,
-  PromiseExpr,
-  PropAccessExpr,
-  PropAssignExpr,
-  ReferenceExpr,
-  RegexExpr,
-  SpreadAssignExpr,
-  SpreadElementExpr,
-  StringLiteralExpr,
-  TaggedTemplateExpr,
-  TemplateExpr,
-  ThisExpr,
-  TypeOfExpr,
-  UnaryExpr,
-  UndefinedLiteralExpr,
-  VoidExpr,
-  YieldExpr,
-  // Stmt
-  BlockStmt,
-  BreakStmt,
-  CaseClause,
-  CatchClause,
-  ContinueStmt,
-  DebuggerStmt,
-  DefaultClause,
-  DoStmt,
-  EmptyStmt,
-  ExprStmt,
-  ForInStmt,
-  ForOfStmt,
-  ForStmt,
-  IfStmt,
-  LabelledStmt,
-  ReturnStmt,
-  SwitchStmt,
-  ThrowStmt,
-  TryStmt,
-  VariableDecl,
-  VariableDeclList,
-  VariableStmt,
-  WhileStmt,
-  WithStmt,
-  // Decl
-  ArrayBinding,
-  BindingElem,
-  ClassDecl,
-  ClassStaticBlockDecl,
-  ConstructorDecl,
-  FunctionDecl,
-  GetAccessorDecl,
-  MethodDecl,
-  ObjectBinding,
-  ParameterDecl,
-  PropDecl,
-  SetAccessorDecl,
-  // Keywords
-  ImportKeyword,
-  SuperKeyword,
+fn true_expr() -> Box<Expr> {
+  Box::new(Expr::Lit(Lit::Bool(Bool {
+    span: DUMMY_SP,
+    value: true,
+  })))
+}
+
+fn false_expr() -> Box<Expr> {
+  Box::new(Expr::Lit(Lit::Bool(Bool {
+    span: DUMMY_SP,
+    value: false,
+  })))
+}
+
+fn undefined_expr() -> Box<Expr> {
+  Box::new(Expr::Ident(Ident {
+    optional: false,
+    span: DUMMY_SP,
+    sym: JsWord::from("undefined"),
+  }))
 }
