@@ -2,6 +2,7 @@ use closure_decorator::ClosureDecorator;
 use swc_common::Mark;
 use swc_ecma_visit::{Fold, VisitMut};
 use swc_plugin::{ast::*, plugin_transform, TransformPluginProgramMetadata};
+use to_functionless_ast::parse_closure;
 
 mod closure_decorator;
 mod free_variables;
@@ -12,6 +13,7 @@ mod virtual_machine;
 pub fn wrap_closures(mut program: Program, _metadata: TransformPluginProgramMetadata) -> Program {
   program.visit_mut_with(&mut ClosureDecorator::new());
 
+  parse_closure();
   program
 }
 
