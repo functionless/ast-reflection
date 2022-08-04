@@ -201,7 +201,7 @@ impl Visit for FreeVariableVisitor {
   fn visit_ident(&mut self, ident: &Ident) {
     // all identifiers that are discovered by the visitor are assumed to be references
     // because of the order in which we traverse
-    if self.vm.lookup_ident(ident).is_none() {
+    if self.vm.is_id_visible(ident) {
       self.free_variables.insert(ident.to_id());
     }
   }

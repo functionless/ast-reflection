@@ -1,10 +1,10 @@
-use im::HashMap;
+use im::HashSet;
 use swc_plugin::{ast::*, utils::StmtLike};
 
 /**
  * A mapping of [reference name](JsWord) to the [unique id](u32) of that reference.
  */
-pub type Names = HashMap<JsWord, u32>;
+pub type Names = HashSet<Id>;
 
 #[derive(Clone)]
 pub struct VirtualMachine {
@@ -22,12 +22,16 @@ impl VirtualMachine {
 pub type Stack = Vec<Names>;
 
 impl VirtualMachine {
-  pub fn lookup_ident(&self, ident: &Ident) -> Option<u32> {
-    self.lookup_name(&ident.sym)
+  pub fn is_id_visible(&self, ident: &Ident) -> bool {
+    self.lookup_id(ident.to_id())
   }
 
-  pub fn lookup_name(&self, name: &JsWord) -> Option<u32> {
-    self.stack.last().and_then(|lex| lex.get(name).map(|u| *u))
+  pub fn lookup_id(&self, id: Id) -> bool {
+    self
+      .stack
+      .last()
+      .map(|lex| lex.contains(&id))
+      .unwrap_or(false)
   }
 
   /**
@@ -64,7 +68,7 @@ impl VirtualMachine {
    * ```
    */
   pub fn enter(&mut self) {
-    // cloning immutable hash maps is fast - O(1)
+    // cloning immutable hash setss is fast - O(1)
     // data sharing of immutable data structures should also be memory efficient - O(lg n)
     self.stack.push(match self.stack.last() {
       Some(parent) => parent.clone(),
@@ -79,50 +83,40 @@ impl VirtualMachine {
     }
   }
 
-  pub fn update_name(&mut self, name: JsWord, id: u32) {
+  pub fn bind_id(&mut self, id: Id) {
     let names = self.stack.last_mut().expect("stack underflow");
-    *names = names.update(name, id);
+    *names = names.update(id);
   }
 
-  /**
-   * Binds the name of an [ident](Ident) to the current [lexical scope](LexicalScope).
-   */
   pub fn bind_ident(&mut self, ident: &Ident) {
-    let id = self.get_unique_id(&ident);
-
-    self.update_name(ident.sym.clone(), id);
+    self.bind_id(ident.to_id());
   }
 
-  /**
-   * Get (or assign) a [unique id](u32) for an [identifier](Ident).
-   *
-   * The ID will be used to uniquely identify a variable (regardless of name shadowing/collisions).
-   */
-  pub fn get_unique_id(&mut self, ident: &Ident) -> u32 {
-    ident.to_id().1.to_owned().as_u32()
+  pub fn bind_module_items(&mut self, items: &[ModuleItem]) {
+    self.bind_stmts(items);
   }
 
   pub fn bind_block(&mut self, block: &BlockStmt) {
-    self.bind_block_stmts(&block.stmts)
+    self.bind_stmts(&block.stmts)
   }
 
-  pub fn bind_block_stmts<T>(&mut self, stmts: &[T])
+  pub fn bind_stmts<T>(&mut self, stmts: &[T])
   where
     T: StmtLike,
   {
     stmts.iter().for_each(|stmt| match stmt.as_stmt() {
       Some(stmt) => match stmt {
-        Stmt::Decl(Decl::Var(var)) => var.decls.iter().for_each(|decl| {
-          self.bind_var_declarator(decl);
-        }),
-        Stmt::Decl(Decl::Fn(func)) => {
-          // function decl() {} // function declaration - hoist to block scope
-          self.bind_ident(&func.ident);
-        }
+        Stmt::Decl(Decl::Class(class_decl)) => self.bind_class_decl(class_decl),
+        Stmt::Decl(Decl::Var(var)) => self.bind_var_decl(var),
+        Stmt::Decl(Decl::Fn(func)) => self.bind_ident(&func.ident),
         _ => {}
       },
       _ => {}
     });
+  }
+
+  pub fn bind_class_decl(&mut self, class_decl: &ClassDecl) {
+    self.bind_ident(&class_decl.ident);
   }
 
   pub fn bind_all_constructor_params(&mut self, params: &[ParamOrTsParamProp]) {
@@ -133,6 +127,22 @@ impl VirtualMachine {
         TsParamPropParam::Ident(ident) => self.bind_ident(&ident.id),
       },
     })
+  }
+
+  /**
+   * Bind names produced by a [VarDeclarator](VarDeclarator)
+   */
+  pub fn bind_var_decl(&mut self, var: &VarDecl) {
+    var.decls.iter().for_each(|decl| {
+      self.bind_var_declarator(decl);
+    })
+  }
+
+  /**
+   * Bind names produced by a [VarDeclarator](VarDeclarator)
+   */
+  pub fn bind_var_declarator(&mut self, decl: &VarDeclarator) {
+    self.bind_pat(&decl.name);
   }
 
   pub fn bind_all_params(&mut self, params: &[Param]) {
@@ -200,12 +210,5 @@ impl VirtualMachine {
 
       _ => {}
     }
-  }
-
-  /**
-   * Bind names produced by a [VarDeclarator](VarDeclarator)
-   */
-  pub fn bind_var_declarator(&mut self, decl: &VarDeclarator) {
-    self.bind_pat(&decl.name);
   }
 }
