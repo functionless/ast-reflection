@@ -1105,7 +1105,7 @@ impl ClosureDecorator {
                     vec![self.parse_pat(&pat), false_expr()],
                   ),
                   Some(pat)=> self.parse_pat(pat),
-                  None => undefined_expr(),
+                  None => self.new_node(Node::OmittedExpr, vec![]),
                 },
                 spread: None
               }))
@@ -1129,9 +1129,10 @@ impl ClosureDecorator {
                   match &assign.value {
                     // {key: value}
                     Some(value) => vec![
-                      self.parse_expr(value.as_ref()),
+                      self.parse_ident(&assign.key),
                       false_expr(),
-                      self.parse_ident(&assign.key)
+                      undefined_expr(),
+                      self.parse_expr(value.as_ref()),
                     ],
                     // {key}
                     None => vec![self.parse_ident(&assign.key), false_expr()],
@@ -1163,7 +1164,6 @@ impl ClosureDecorator {
                 ObjectPatProp::Rest(rest) => self.new_node(
                   Node::BindingElem,
                   vec![self.parse_pat(&rest.arg), true_expr()],
-                  
                 ),
               }
             }))
@@ -1183,7 +1183,7 @@ impl ClosureDecorator {
       Pat::Expr(expr) => self.parse_expr(expr),
       Pat::Ident(ident) => self.parse_ident(ident),
       Pat::Invalid(_invalid) => self.new_error_node("Invalid Node"),
-      Pat::Rest(rest) => self.new_node(Node::BindingElem, vec![self.parse_pat(rest.arg.as_ref())]),
+      Pat::Rest(rest) => self.new_node(Node::BindingElem, vec![self.parse_pat(rest.arg.as_ref()), true_expr()]),
     }
   }
 
