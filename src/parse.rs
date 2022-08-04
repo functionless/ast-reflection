@@ -1,9 +1,9 @@
 use core::panic;
 
 use swc_common::DUMMY_SP;
+use swc_plugin::utils::quote_ident;
 use swc_plugin::{
   ast::*,
-  utils::{quote_ident},
 };
 
 use crate::{closure_decorator::ClosureDecorator};
@@ -105,25 +105,48 @@ impl ClosureDecorator {
     )
   }
 
+  pub fn parse_function_decl(&self, function: &FnDecl) -> Box<Expr> {
+    self.parse_function(Node::FunctionDecl, Some(&function.ident), &function.function)
+  }
+
+  pub fn parse_function_expr(&self, function: &FnExpr) -> Box<Expr> {
+    self.parse_function(Node::FunctionExpr, function.ident.as_ref(), &function.function)
+  }
+
+  fn parse_function(&self, kind: Node, name: Option<&Ident>, function: &Function) -> Box<Expr> {
+    self.new_node(
+      kind,
+      vec![
+        name.map(|ident| str(&ident.to_id().0)).unwrap_or(undefined_expr()),
+        self.parse_params(&function.params), 
+        function.body.as_ref().map(|b| self.parse_block(b)).unwrap_or(undefined_expr()),
+        if function.is_async { true_expr() } else { false_expr() },
+        if function.is_generator { true_expr() } else { false_expr() }
+      ],
+    )
+  }
+
   pub fn parse_arrow(&self, arrow: &ArrowExpr) -> Box<Expr> {
     self.new_node(
       Node::ArrowFunctionExpr,
-      vec![self.parse_pats(&arrow.params), self.parse_pats(&arrow.params)],
-    )
-  }
-  
-  pub fn parse_function_decl(&self, function: &Function) -> Box<Expr> {
-    self.parse_function(Node::FunctionDecl, &function)
-  }
-
-  pub fn parse_function_expr(&self, function: &Function) -> Box<Expr> {
-    self.parse_function(Node::FunctionExpr, &function)
-  }
-
-  fn parse_function(&self, kind: Node, function: &Function) -> Box<Expr> {
-    self.new_node(
-      kind,
-      vec![self.parse_params(&function.params)],
+      vec![
+        self.parse_pats(&arrow.params), 
+        match &arrow.body {
+          BlockStmtOrExpr::BlockStmt(block) => self.parse_block(block),
+          BlockStmtOrExpr::Expr(expr) => self.new_node(Node::BlockStmt, vec![
+            Box::new(Expr::Array(ArrayLit {
+              elems: vec![
+                Some(ExprOrSpread {
+                  spread: None,
+                  expr: self.new_node(Node::ReturnStmt, vec![self.parse_expr(expr)])
+                }),
+              ],
+              span: DUMMY_SP,
+            })) 
+          ]),
+        },
+        if arrow.is_async { true_expr() } else { false_expr() },
+      ],
     )
   }
 
@@ -149,7 +172,7 @@ impl ClosureDecorator {
   fn parse_decl(&self, decl: &Decl) -> Box<Expr> {
     match decl {
       Decl::Class(class_decl) => self.parse_class_decl(class_decl),
-      Decl::Fn(function) => self.parse_function(Node::FunctionDecl, &function.function),
+      Decl::Fn(function) => self.parse_function_decl(function),
       Decl::TsEnum(ts_enum) => panic!("enums not supported"),
       Decl::TsInterface(interface) => panic!("interface not supported"),
       Decl::TsModule(module) => panic!("module declarations not supported"),
@@ -344,7 +367,7 @@ impl ClosureDecorator {
       Expr::Array(array) => self.new_node(
         Node::ArrayLiteralExpr,
         array
-          .elems
+          .elems  
           .iter()
           .map(|element| match element {
             Some(e) => if e.spread.is_some() {
@@ -445,11 +468,12 @@ impl ClosureDecorator {
           self.parse_expr(&cond.alt.as_ref()),
         ],
       ),
-      Expr::Fn(function) => self.parse_function(Node::FunctionExpr, &function.function),
+      Expr::Fn(function) => self.parse_function_expr(&function),
       Expr::Ident(id) => {
         if self.vm.is_id_visible(id) {
           // if this is a free variable, then create a new ReferenceExpr(() => ident)
           self.new_node(Node::ReferenceExpr, vec![
+            str(&id.sym),
             Box::new(Expr::Arrow(ArrowExpr {
               is_async: false,
               is_generator: false,
@@ -458,7 +482,9 @@ impl ClosureDecorator {
               span: DUMMY_SP,
               type_params: None,
               body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(id.clone())))
-            }))
+            })),
+            num(id.to_id().1.as_u32()),
+            Box::new(Expr::Ident(quote_ident!("__filename")))
           ])
         } else {
           self.parse_ident(id)
@@ -524,61 +550,70 @@ impl ClosureDecorator {
       ),
       Expr::Object(object) => self.new_node(
         Node::ObjectLiteralExpr,
-        object
-          .props
-          .iter()
-          .map(|prop| match prop {
-            PropOrSpread::Prop(prop) => match prop.as_ref() {
-              // invalid according to SWC's docs on Prop::Assign
-              Prop::Assign(_assign) => panic!("Invalid Syntax in Object Literal"),
-              Prop::Getter(getter) => self.new_node(
-                Node::GetAccessorDecl,
-                vec![
-                  self.parse_prop_name(&getter.key),
-                  self.parse_block(&getter.body.as_ref().unwrap()),
-                ],
-                
-              ),
-              Prop::KeyValue(assign) => self.new_node(
-                Node::PropAssignExpr,
-                vec![
-                  self.parse_prop_name(&assign.key),
-                  self.parse_expr(assign.value.as_ref()),
-                ],
-                
-              ),
-              Prop::Method(method) => self.new_node(
-                Node::MethodDecl,
-                vec![
-                  //
-                  self.parse_prop_name(&method.key),
-                  self.parse_params(&method.function.params),
-                  self.parse_block(method.function.body.as_ref().unwrap()),
-                ],
-                
-              ),
-              Prop::Setter(setter) => self.new_node(
-                Node::SetAccessorDecl,
-                vec![
-                  self.parse_prop_name(&setter.key),
-                  self.parse_pat(&setter.param),
-                  self.parse_block(setter.body.as_ref().unwrap()),
-                ],
-                
-              ),
-              Prop::Shorthand(ident) => self.new_node(
-                Node::PropAssignExpr,
-                vec![self.parse_ident(ident), self.parse_ident(ident)],
-                
-              ),
-            },
-            PropOrSpread::Spread(spread) => self.new_node(
-              Node::SpreadAssignExpr,
-              vec![self.parse_expr(spread.expr.as_ref())],
-              
-            ),
-          })
-          .collect(),
+        vec![
+          Box::new(Expr::Array(ArrayLit {
+            span: DUMMY_SP,
+            elems: object
+              .props
+              .iter()
+              .map(|prop| match prop {
+                PropOrSpread::Prop(prop) => match prop.as_ref() {
+                  // invalid according to SWC's docs on Prop::Assign
+                  Prop::Assign(_assign) => panic!("Invalid Syntax in Object Literal"),
+                  Prop::Getter(getter) => self.new_node(
+                    Node::GetAccessorDecl,
+                    vec![
+                      self.parse_prop_name(&getter.key),
+                      self.parse_block(&getter.body.as_ref().unwrap()),
+                    ],
+                    
+                  ),
+                  Prop::KeyValue(assign) => self.new_node(
+                    Node::PropAssignExpr,
+                    vec![
+                      self.parse_prop_name(&assign.key),
+                      self.parse_expr(assign.value.as_ref()),
+                    ],
+                    
+                  ),
+                  Prop::Method(method) => self.new_node(
+                    Node::MethodDecl,
+                    vec![
+                      //
+                      self.parse_prop_name(&method.key),
+                      self.parse_params(&method.function.params),
+                      self.parse_block(method.function.body.as_ref().unwrap()),
+                    ],
+                    
+                  ),
+                  Prop::Setter(setter) => self.new_node(
+                    Node::SetAccessorDecl,
+                    vec![
+                      self.parse_prop_name(&setter.key),
+                      self.parse_pat(&setter.param),
+                      self.parse_block(setter.body.as_ref().unwrap()),
+                    ],
+                    
+                  ),
+                  Prop::Shorthand(ident) => self.new_node(
+                    Node::PropAssignExpr,
+                    vec![self.parse_ident(ident), self.parse_ident(ident)],
+                    
+                  ),
+                },
+                PropOrSpread::Spread(spread) => self.new_node(
+                  Node::SpreadAssignExpr,
+                  vec![self.parse_expr(spread.expr.as_ref())],
+                  
+                ),
+              })
+              .map(|prop| Some(ExprOrSpread {
+                expr: prop,
+                spread: None
+              }))
+              .collect(),
+          }))
+        ]
       ),
       Expr::OptChain(opt_chain) => match &opt_chain.base {
         OptChainBase::Call(call) => self.parse_call_expr(&call.callee, &call.args, true),
@@ -738,8 +773,7 @@ impl ClosureDecorator {
         self.parse_expr(expr),
         self.parse_call_args(args),
         if is_optional { true_expr() } else { false_expr() }
-      ],
-      
+      ], 
     )
   }
 
@@ -823,12 +857,19 @@ impl ClosureDecorator {
   fn parse_block(&self, block: &BlockStmt) -> Box<Expr> {
     self.new_node(
       Node::BlockStmt,
-      block
-        .stmts
-        .iter()
-        .map(|stmt| self.parse_stmt(stmt))
-        .collect(),
-      
+      vec![
+        Box::new(Expr::Array(ArrayLit {
+          elems: block
+            .stmts
+            .iter()
+            .map(|stmt| Some(ExprOrSpread {
+              expr: self.parse_stmt(stmt),
+              spread: None
+            }))
+            .collect(),
+          span: DUMMY_SP
+        }))
+      ],
     )
   }
 
@@ -935,19 +976,27 @@ impl ClosureDecorator {
       Node::VariableStmt,
       vec![self.new_node(
         Node::VariableDeclList,
-        var_decl
-          .decls
-          .iter()
-          .map(|decl| self.parse_var_declarator(decl))
-          .collect(),
+        vec![
+          Box::new(Expr::Array(ArrayLit {
+            elems: var_decl
+              .decls
+              .iter()
+              .map(|decl| Some(ExprOrSpread {
+                expr: self.parse_var_declarator(decl),
+                spread: None
+              }))
+              .collect(),
+            span: DUMMY_SP
+          }))
+        ]
       )],
-      
     )
   }
 
   fn parse_var_declarator(&self, decl: &VarDeclarator) -> Box<Expr> {
     self.new_node(Node::VariableDecl, vec![
-      self.parse_pat(&decl.name)
+      self.parse_pat(&decl.name),
+      decl.init.as_ref().map(|init| self.parse_expr(init)).unwrap_or(undefined_expr())
     ])
   }
 
@@ -985,20 +1034,19 @@ impl ClosureDecorator {
   }
 
   fn parse_ident(&self, ident: &Ident) -> Box<Expr> {
-    self.new_node(
-      Node::Identifier,
-      vec![self.new_node(
-        Node::StringLiteralExpr,
-        vec![Box::new(Expr::Lit(Lit::Str(Str {
-          raw: None,
-          span: DUMMY_SP,
-          value: ident.sym.clone(),
-        })))],
-      )],
-    )
+    let id = ident.to_id();
+    if &id.0 == "undefined" {
+      self.new_node(
+        Node::UndefinedLiteralExpr,
+        vec![],
+      )
+    } else {
+      self.new_node(
+        Node::Identifier,
+        vec![str(&ident.sym)],
+      )
+    }
   }
-
-  
 
   fn parse_pats(&self, pats: &[Pat]) -> Box<Expr> {
     Box::new(Expr::Array(ArrayLit {
@@ -1019,68 +1067,84 @@ impl ClosureDecorator {
     match pat {
       Pat::Array(array_binding) => self.new_node(
         Node::ArrayBinding,
-        array_binding
-          .elems
-          .iter()
-          .map(|elem| match elem {
-            Some(pat @ Pat::Ident(_)) => self.new_node(
-              Node::BindingElem,
-              vec![self.parse_pat(&pat), false_expr()],
-            ),
-            Some(pat)=> self.parse_pat(pat),
-            None => undefined_expr(),
-          })
-          .collect(),
+        vec![
+          Box::new(Expr::Array(ArrayLit {
+            span: DUMMY_SP,
+            elems: array_binding
+              .elems
+              .iter()
+              .map(|elem| Some(ExprOrSpread {
+                expr: match elem {
+                  Some(pat @ Pat::Ident(_)) => self.new_node(
+                    Node::BindingElem,
+                    vec![self.parse_pat(&pat), false_expr()],
+                  ),
+                  Some(pat)=> self.parse_pat(pat),
+                  None => undefined_expr(),
+                },
+                spread: None
+              }))
+              .collect(),
+          }))
+        ]
       ),
       Pat::Object(object_binding) => self.new_node(
         Node::ObjectBinding,
-        object_binding
-          .props
-          .iter()
-          .map(|prop| match prop {
-            ObjectPatProp::Assign(assign) => self.new_node(
-              Node::BindingElem,
-              match &assign.value {
+        vec![
+          Box::new(Expr::Array(ArrayLit {
+            span: DUMMY_SP,
+            elems: object_binding
+            .props
+            .iter()
+            .map(|prop| Some(ExprOrSpread {
+              spread: None,
+              expr: match prop {
+                ObjectPatProp::Assign(assign) => self.new_node(
+                  Node::BindingElem,
+                  match &assign.value {
+                    // {key: value}
+                    Some(value) => vec![
+                      self.parse_expr(value.as_ref()),
+                      false_expr(),
+                      self.parse_ident(&assign.key)
+                    ],
+                    // {key}
+                    None => vec![self.parse_ident(&assign.key), false_expr()],
+                  },
+                  
+                ),
                 // {key: value}
-                Some(value) => vec![
-                  self.parse_expr(value.as_ref()),
-                  false_expr(),
-                  Box::new(Expr::Ident(assign.key.clone())),
-                ],
-                // {key}
-                None => vec![Box::new(Expr::Ident(assign.key.clone())), false_expr()],
-              },
-              
-            ),
-            // {key: value}
-            ObjectPatProp::KeyValue(kv) => self.new_node(
-              Node::BindingElem,
-              vec![
-                match kv.value.as_ref() {
-                  // if this is an assign pattern, e.g. {key = value}
-                  // then parse `key` as the `BindingElement.name` in FunctionlessAST
-                  Pat::Assign(assign) => self.parse_pat(assign.left.as_ref()),
-                  value => self.parse_pat(value),
-                },
-                false_expr(),
-                self.parse_prop_name(&kv.key),
-                match kv.value.as_ref() {
-                  // if this is an assign patter, e.g. `{key = value}`
-                  // then parse `value` as the `BindingElement.initializer` in FunctionlessAST
-                  Pat::Assign(assign) => self.parse_expr(assign.right.as_ref()),
-                  _ => undefined_expr(),
-                },
-              ],
-              
-            ),
-            // { ...rest }
-            ObjectPatProp::Rest(rest) => self.new_node(
-              Node::BindingElem,
-              vec![self.parse_pat(&rest.arg), true_expr()],
-              
-            ),
-          })
-          .collect(),
+                ObjectPatProp::KeyValue(kv) => self.new_node(
+                  Node::BindingElem,
+                  vec![
+                    match kv.value.as_ref() {
+                      // if this is an assign pattern, e.g. {key = value}
+                      // then parse `key` as the `BindingElement.name` in FunctionlessAST
+                      Pat::Assign(assign) => self.parse_pat(assign.left.as_ref()),
+                      value => self.parse_pat(value),
+                    },
+                    false_expr(),
+                    self.parse_prop_name(&kv.key),
+                    match kv.value.as_ref() {
+                      // if this is an assign patter, e.g. `{key = value}`
+                      // then parse `value` as the `BindingElement.initializer` in FunctionlessAST
+                      Pat::Assign(assign) => self.parse_expr(assign.right.as_ref()),
+                      _ => undefined_expr(),
+                    },
+                  ],
+                  
+                ),
+                // { ...rest }
+                ObjectPatProp::Rest(rest) => self.new_node(
+                  Node::BindingElem,
+                  vec![self.parse_pat(&rest.arg), true_expr()],
+                  
+                ),
+              }
+            }))
+            .collect()
+          }))
+        ],
       ),
       Pat::Assign(assign) => self.new_node(
         Node::BindingElem,
@@ -1094,26 +1158,30 @@ impl ClosureDecorator {
       Pat::Expr(expr) => self.parse_expr(expr),
       Pat::Ident(ident) => self.parse_ident(ident),
       Pat::Invalid(_invalid) => self.new_error_node("Invalid Node"),
-      Pat::Rest(rest) => self.new_node(Node::BindingElem, vec![]),
+      Pat::Rest(rest) => self.new_node(Node::BindingElem, vec![self.parse_pat(rest.arg.as_ref())]),
     }
   }
 
   fn new_node(&self, kind: Node, args: Vec<Box<Expr>>) -> Box<Expr> {
-    Box::new(Expr::New(NewExpr {
-      callee: Box::new(Expr::Member(MemberExpr {
-        obj: Box::new(Expr::Ident(self.functionless.clone())),
-        prop: MemberProp::Ident(quote_ident!(kind.as_ref())),
+    let mut elems: Vec<Option<ExprOrSpread>> = vec![Some(ExprOrSpread {
+      expr: Box::new(Expr::Lit(Lit::Num(Number {
+        raw: None,
         span: DUMMY_SP,
-      })),
-      args: Some(args
-        .iter()
-        .map(|arg| ExprOrSpread {
-          expr: arg.clone(),
-          spread: None,
-        })
-        .collect()),
-      type_args: None,
+        value: kind as u32 as f64
+      }))),
+      spread: None
+    })];
+
+    args
+    .iter()
+    .for_each(|arg| elems.push(Some(ExprOrSpread {
+      expr: arg.to_owned(),
+      spread: None,
+    })));
+
+    Box::new(Expr::Array(ArrayLit {
       span: DUMMY_SP,
+      elems: elems
     }))
   }
 
@@ -1127,6 +1195,32 @@ impl ClosureDecorator {
       })))],
     )
   }
+}
+
+// fn arr(elems: Vec<Box<Expr>>) -> Box<Expr> {
+//   Box::new(Expr::Array(ArrayLit {
+//     elems: elems.iter().map(|expr| Some(ExprOrSpread {
+//       expr: expr.clone(),
+//       spread: None
+//     })).collect(),
+//     span: DUMMY_SP
+//   }))
+// }
+
+fn str(str: &JsWord) -> Box<Expr> {
+  Box::new(Expr::Lit(Lit::Str(Str {
+    raw: None,
+    span: DUMMY_SP,
+    value: str.clone(),
+  })))
+}
+
+fn num(i: u32) -> Box<Expr> {
+  Box::new(Expr::Lit(Lit::Num(Number {
+    raw: None,
+    span: DUMMY_SP,
+    value: i as u32 as f64
+  })))
 }
 
 fn true_expr() -> Box<Expr> {

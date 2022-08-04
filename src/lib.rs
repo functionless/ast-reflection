@@ -5,7 +5,6 @@ use swc_plugin::{ast::*, plugin_transform, TransformPluginProgramMetadata};
 
 mod ast;
 mod closure_decorator;
-mod free_variables;
 mod parse;
 mod virtual_machine;
 

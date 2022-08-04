@@ -66,8 +66,6 @@ impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
       vm: VirtualMachine::new(),
-      // global reference to Functionless
-      // our require-hook will ensure this value is globally available
       functionless: Ident {
         span: Span {
           // use syntax context of 0 for global lexical scope
@@ -76,7 +74,7 @@ impl ClosureDecorator {
           hi: BytePos(0),
           lo: BytePos(0),
         },
-        sym: JsWord::from("Functionless"),
+        sym: JsWord::from(REGISTER_FUNCTION_NAME),
         optional: false,
       },
     }
@@ -86,15 +84,6 @@ impl ClosureDecorator {
 impl VisitMut for ClosureDecorator {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     self.vm.bind_module_items(items);
-
-    prepend_stmts(
-      items,
-      vec![
-        ModuleItem::Stmt(Stmt::Decl(create_register_function())),
-        ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
-      ]
-      .into_iter(),
-    );
 
     // extract statements to register hoisted function declarations
     let register_stmts: Vec<ModuleItem> = items
@@ -112,6 +101,15 @@ impl VisitMut for ClosureDecorator {
 
     // finally, prepend the __fnl_func calls to the top of the module
     prepend_stmts(items, register_stmts.into_iter());
+
+    prepend_stmts(
+      items,
+      vec![
+        ModuleItem::Stmt(Stmt::Decl(create_register_function())),
+        ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
+      ]
+      .into_iter(),
+    );
   }
 
   fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
@@ -136,61 +134,61 @@ impl VisitMut for ClosureDecorator {
     prepend_stmts(stmts, register_stmts.into_iter());
   }
 
-  fn visit_mut_class(&mut self, class: &mut Class) {
-    let register_stmts: Vec<Stmt> = class
-      .body
-      .iter()
-      .filter_map(|member| match member {
-        ClassMember::Method(method) => Some(self.register_ast_stmt(
-          // global.__fnl__func(this.prototype.method_name, () => .. )
-          Box::new(Expr::Member(MemberExpr {
-            // this.prototype
-            obj: Box::new(Expr::Member(MemberExpr {
-              obj: Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
-              prop: MemberProp::Ident(quote_ident!("prototype")),
-              span: DUMMY_SP,
-            })),
-            span: DUMMY_SP,
-            prop: match &method.key {
-              PropName::Ident(id) => MemberProp::Ident(id.clone()),
-              PropName::Computed(expr) => MemberProp::Computed(expr.clone()),
-              prop => MemberProp::Computed(ComputedPropName {
-                span: DUMMY_SP,
-                expr: Box::new(Expr::Lit(match prop {
-                  PropName::BigInt(x) => Lit::BigInt(x.clone()),
-                  PropName::Num(x) => Lit::Num(x.clone()),
-                  PropName::Str(x) => Lit::Str(x.clone()),
-                  _ => panic!(""),
-                })),
-              }),
-            },
-          })),
-          self.parse_class_method(method),
-        )),
+  // fn visit_mut_class(&mut self, class: &mut Class) {
+  //   let register_stmts: Vec<Stmt> = class
+  //     .body
+  //     .iter()
+  //     .filter_map(|member| match member {
+  //       ClassMember::Method(method) => Some(self.register_ast_stmt(
+  //         // global.__fnl__func(this.prototype.method_name, () => .. )
+  //         Box::new(Expr::Member(MemberExpr {
+  //           // this.prototype
+  //           obj: Box::new(Expr::Member(MemberExpr {
+  //             obj: Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
+  //             prop: MemberProp::Ident(quote_ident!("prototype")),
+  //             span: DUMMY_SP,
+  //           })),
+  //           span: DUMMY_SP,
+  //           prop: match &method.key {
+  //             PropName::Ident(id) => MemberProp::Ident(id.clone()),
+  //             PropName::Computed(expr) => MemberProp::Computed(expr.clone()),
+  //             prop => MemberProp::Computed(ComputedPropName {
+  //               span: DUMMY_SP,
+  //               expr: Box::new(Expr::Lit(match prop {
+  //                 PropName::BigInt(x) => Lit::BigInt(x.clone()),
+  //                 PropName::Num(x) => Lit::Num(x.clone()),
+  //                 PropName::Str(x) => Lit::Str(x.clone()),
+  //                 _ => panic!(""),
+  //               })),
+  //             }),
+  //           },
+  //         })),
+  //         self.parse_class_method(method),
+  //       )),
 
-        ClassMember::PrivateMethod(_method) => None,
+  //       ClassMember::PrivateMethod(_method) => None,
 
-        _ => None,
-      })
-      .collect();
+  //       _ => None,
+  //     })
+  //     .collect();
 
-    // class.body.iter().for_each(|member| match member {
-    //   ClassMember::Constructor(ctor) => {
-    //     ctor.body.iter().for_each(|body| {});
-    //   }
-    //   _ => {}
-    // });
+  //   // class.body.iter().for_each(|member| match member {
+  //   //   ClassMember::Constructor(ctor) => {
+  //   //     ctor.body.iter().for_each(|body| {});
+  //   //   }
+  //   //   _ => {}
+  //   // });
 
-    class.visit_mut_children_with(self);
+  //   class.visit_mut_children_with(self);
 
-    class.body.push(ClassMember::StaticBlock(StaticBlock {
-      span: DUMMY_SP,
-      body: BlockStmt {
-        span: DUMMY_SP,
-        stmts: register_stmts,
-      },
-    }));
-  }
+  //   class.body.push(ClassMember::StaticBlock(StaticBlock {
+  //     span: DUMMY_SP,
+  //     body: BlockStmt {
+  //       span: DUMMY_SP,
+  //       stmts: register_stmts,
+  //     },
+  //   }));
+  // }
 
   fn visit_mut_params(&mut self, params: &mut Vec<Param>) {
     self.vm.bind_all_params(params);
@@ -202,6 +200,46 @@ impl VisitMut for ClosureDecorator {
 
   fn visit_mut_pat(&mut self, pat: &mut Pat) {
     self.vm.bind_pat(pat);
+  }
+
+  fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
+    let is_bind = match &mut call.callee {
+      Callee::Expr(expr) => match expr.as_mut() {
+        Expr::Member(member) => match &member.prop {
+          MemberProp::Ident(ident) if &ident.sym == "bind" => Some(member.obj.as_mut()),
+          _ => None,
+        },
+        _ => None,
+      },
+      _ => None,
+    };
+
+    if is_bind.is_some() {
+      let expr = is_bind.unwrap();
+
+      let mut args = vec![
+        // func
+        ExprOrSpread {
+          expr: Box::new(expr.take()),
+          spread: None,
+        },
+      ];
+      call.args.iter_mut().for_each(|arg| {
+        args.push(ExprOrSpread {
+          spread: None,
+          expr: arg.expr.take(),
+        })
+      });
+
+      *call = CallExpr {
+        callee: Callee::Expr(Box::new(Expr::Ident(quote_ident!(BIND_FUNCTION_NAME)))),
+        span: call.span.clone(),
+        type_args: None,
+        args,
+      }
+    }
+
+    call.visit_mut_children_with(self);
   }
 
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
@@ -220,7 +258,7 @@ impl VisitMut for ClosureDecorator {
         *expr = *self.register_mut_ast(&mut Expr::Arrow(arrow.take()), ast);
       }
       Expr::Fn(func) if func.function.body.is_some() => {
-        let ast = self.parse_function_expr(&func.function);
+        let ast = self.parse_function_expr(&func);
 
         // create a new scope for the function parameters
         self.vm.enter();
@@ -248,7 +286,7 @@ impl ClosureDecorator {
     match stmt {
       Stmt::Decl(Decl::Fn(func)) => Some(self.register_ast_stmt(
         Box::new(Expr::Ident(func.ident.clone())),
-        self.parse_function_decl(&func.function),
+        self.parse_function_decl(&func),
       )),
       _ => None,
     }
@@ -268,12 +306,8 @@ impl ClosureDecorator {
     Box::new(Expr::Call(CallExpr {
       span: DUMMY_SP,
       type_args: None,
-      // Functionless.register(() =>  { .. }, () => new FunctionDecl([..]))
-      callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
-        span: DUMMY_SP,
-        obj: Box::new(Expr::Ident(self.functionless.clone())),
-        prop: MemberProp::Ident(quote_ident!("register")),
-      }))),
+      // register(() =>  { .. }, () => new FunctionDecl([..]))
+      callee: Callee::Expr(Box::new(Expr::Ident(self.functionless.clone()))),
       args: vec![
         ExprOrSpread {
           expr: func,
