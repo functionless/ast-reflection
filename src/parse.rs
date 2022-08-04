@@ -130,7 +130,7 @@ impl ClosureDecorator {
     self.new_node(
       Node::ArrowFunctionExpr,
       vec![
-        self.parse_pats(&arrow.params), 
+        self.parse_pats_as_params(&arrow.params), 
         match &arrow.body {
           BlockStmtOrExpr::BlockStmt(block) => self.parse_block(block),
           BlockStmtOrExpr::Expr(expr) => self.new_node(Node::BlockStmt, vec![
@@ -166,7 +166,9 @@ impl ClosureDecorator {
   }
 
   fn parse_param(&self, param: &Param) -> Box<Expr> {
-    self.parse_pat(&param.pat)
+    self.new_node(Node::ParameterDecl, vec![
+      self.parse_pat(&param.pat)
+    ])
   }
   
   fn parse_decl(&self, decl: &Decl) -> Box<Expr> {
@@ -177,7 +179,7 @@ impl ClosureDecorator {
       Decl::TsInterface(interface) => panic!("interface not supported"),
       Decl::TsModule(module) => panic!("module declarations not supported"),
       Decl::TsTypeAlias(type_alias) => panic!("type alias not supported"),
-      Decl::Var(var_decl) => self.parse_var_decl(var_decl),
+      Decl::Var(var_decl) => self.new_node(Node::VariableStmt, vec![self.parse_var_decl(var_decl)]),
     }
   }
 
@@ -192,7 +194,18 @@ impl ClosureDecorator {
         Node::DoStmt,
         vec![
           // block
-          self.parse_stmt(do_while.body.as_ref()),
+          match do_while.body.as_ref() {
+            Stmt::Block(block) => self.parse_block(&block),
+            stmt => self.new_node(Node::BlockStmt, vec![
+              Box::new(Expr::Array(ArrayLit {
+                elems: vec![Some(ExprOrSpread {
+                  expr: self.parse_stmt(stmt),
+                  spread: None,
+                })],
+                span: DUMMY_SP
+              }))
+            ])
+          },
           // condition
           self.parse_expr(do_while.test.as_ref()),
         ],
@@ -218,6 +231,8 @@ impl ClosureDecorator {
               VarDeclOrExpr::VarDecl(var) => self.parse_var_decl(&var),
             })
             .unwrap_or(undefined_expr()),
+          for_stmt.test.as_ref().map(|test| self.parse_expr(test)).unwrap_or(undefined_expr()),
+          for_stmt.update.as_ref().map(|test| self.parse_expr(test)).unwrap_or(undefined_expr())
         ], 
       ),
       // for (const left in right)
@@ -225,7 +240,7 @@ impl ClosureDecorator {
         Node::ForInStmt,
         vec![
           match &for_in.left {
-            VarDeclOrPat::VarDecl(var_decl) => self.parse_var_decl(var_decl),
+            VarDeclOrPat::VarDecl(var_decl) => self.parse_var_declarator(var_decl.decls.first().unwrap()),
             VarDeclOrPat::Pat(pat) => self.parse_pat(pat),
           },
           self.parse_expr(&for_in.right),
@@ -237,7 +252,7 @@ impl ClosureDecorator {
         Node::ForOfStmt,
         vec![
           match &for_of.left {
-            VarDeclOrPat::VarDecl(var_decl) => self.parse_var_decl(var_decl),
+            VarDeclOrPat::VarDecl(var_decl) => self.parse_var_declarator(var_decl.decls.first().unwrap()),
             VarDeclOrPat::Pat(pat) => self.parse_pat(pat),
           },
           self.parse_expr(&for_of.right),
@@ -348,7 +363,18 @@ impl ClosureDecorator {
         Node::WhileStmt,
         vec![
           self.parse_expr(while_stmt.test.as_ref()),
-          self.parse_stmt(while_stmt.body.as_ref()),
+          match while_stmt.body.as_ref() {
+            Stmt::Block(block) => self.parse_block(&block),
+            stmt => self.new_node(Node::BlockStmt, vec![
+              Box::new(Expr::Array(ArrayLit {
+                elems: vec![Some(ExprOrSpread {
+                  expr: self.parse_stmt(stmt),
+                  spread: None,
+                })],
+                span: DUMMY_SP
+              }))
+            ])
+          },
         ],
       ),
       // TODO: support with https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/with
@@ -366,18 +392,26 @@ impl ClosureDecorator {
     match expr {
       Expr::Array(array) => self.new_node(
         Node::ArrayLiteralExpr,
-        array
-          .elems  
-          .iter()
-          .map(|element| match element {
-            Some(e) => if e.spread.is_some() {
-              self.new_node(Node::SpreadElementExpr, vec![self.parse_expr(e.expr.as_ref())])
-            } else {
-              self.parse_expr(e.expr.as_ref())
-            },
-            None => self.new_node(Node::OmittedExpr, vec![])
-          })
-          .collect(),
+        vec![
+          Box::new(Expr::Array(ArrayLit {
+            elems: array
+              .elems  
+              .iter()
+              .map(|element| Some(ExprOrSpread {
+                expr: match element {
+                  Some(e) => if e.spread.is_some() {
+                    self.new_node(Node::SpreadElementExpr, vec![self.parse_expr(e.expr.as_ref())])
+                  } else {
+                    self.parse_expr(e.expr.as_ref())
+                  },
+                  None => self.new_node(Node::OmittedExpr, vec![])
+                },
+                spread: None
+              }))
+              .collect(),
+            span: DUMMY_SP
+          }))
+        ],
       ),
       Expr::Arrow(arrow) => self.parse_arrow(arrow),
       Expr::Assign(assign) => self.new_node(
@@ -523,29 +557,7 @@ impl ClosureDecorator {
         vec![
           //
           self.parse_expr(&call.callee),
-          Box::new(Expr::Array(ArrayLit {
-            span: DUMMY_SP,
-            elems: call
-              .args
-              .as_ref()
-              .map(|args| {
-                args
-                  .iter()
-                  .map(|arg| {
-                    Some(ExprOrSpread {
-                      spread: None,
-                      expr: if arg.spread.is_some() {
-                        // TODO: we can't represent this right now
-                        self.new_node(Node::Argument, vec![])
-                      } else {
-                        self.new_node(Node::Argument, vec![])
-                      },
-                    })
-                  })
-                  .collect()
-              })
-              .unwrap_or(vec![]),
-          })),
+          call.args.as_ref().map(|args| self.parse_call_args(args)).unwrap_or(empty_array_expr()) ,
         ],
       ),
       Expr::Object(object) => self.new_node(
@@ -808,10 +820,13 @@ impl ClosureDecorator {
           Some(ExprOrSpread {
             spread: None,
             expr: if arg.spread.is_some() {
-              // TODO: we can't represent this right now
-              self.new_node(Node::Argument, vec![])
+              self.new_node(Node::Argument, vec![
+                self.new_node(Node::SpreadElementExpr, vec![self.parse_expr(arg.expr.as_ref())])
+              ])
             } else {
-              self.new_node(Node::Argument, vec![])
+              self.new_node(Node::Argument, vec![
+                self.parse_expr(arg.expr.as_ref())
+              ])
             },
           })
         })
@@ -838,11 +853,7 @@ impl ClosureDecorator {
             })))],
             
           ),
-          MemberProp::Computed(comp) => self.new_node(
-            Node::ComputedPropertyNameExpr,
-            vec![self.parse_expr(comp.expr.as_ref())],
-            
-          ),
+          MemberProp::Computed(comp) => self.parse_expr(comp.expr.as_ref()),
         },
         if is_optional {
           true_expr()
@@ -961,11 +972,11 @@ impl ClosureDecorator {
       ),
       PropName::Ident(i) => self.parse_ident(i),
       PropName::Num(n) => self.new_node(
-        Node::BigIntExpr,
+        Node::NumberLiteralExpr,
         vec![Box::new(Expr::Lit(Lit::Num(n.clone())))],
       ),
       PropName::Str(s) => self.new_node(
-        Node::BigIntExpr,
+        Node::StringLiteralExpr,
         vec![Box::new(Expr::Lit(Lit::Str(s.clone())))],
       ),
     }
@@ -973,23 +984,20 @@ impl ClosureDecorator {
 
   fn parse_var_decl(&self, var_decl: &VarDecl) -> Box<Expr> {
     self.new_node(
-      Node::VariableStmt,
-      vec![self.new_node(
-        Node::VariableDeclList,
-        vec![
-          Box::new(Expr::Array(ArrayLit {
-            elems: var_decl
-              .decls
-              .iter()
-              .map(|decl| Some(ExprOrSpread {
-                expr: self.parse_var_declarator(decl),
-                spread: None
-              }))
-              .collect(),
-            span: DUMMY_SP
-          }))
-        ]
-      )],
+      Node::VariableDeclList,
+      vec![
+        Box::new(Expr::Array(ArrayLit {
+          elems: var_decl
+            .decls
+            .iter()
+            .map(|decl| Some(ExprOrSpread {
+              expr: self.parse_var_declarator(decl),
+              spread: None
+            }))
+            .collect(),
+          span: DUMMY_SP
+        }))
+      ]
     )
   }
 
@@ -1046,6 +1054,23 @@ impl ClosureDecorator {
         vec![str(&ident.sym)],
       )
     }
+  }
+
+  fn parse_pats_as_params(&self, pats: &[Pat]) -> Box<Expr> {
+    Box::new(Expr::Array(ArrayLit {
+      elems: pats
+        .iter()
+        .map(|pat| {
+          Some(ExprOrSpread {
+            spread: None,
+            expr: self.new_node(Node::ParameterDecl, vec![
+              self.parse_pat(pat)
+            ]),
+          })
+        })
+        .collect(),
+      span: DUMMY_SP,
+    }))
   }
 
   fn parse_pats(&self, pats: &[Pat]) -> Box<Expr> {
@@ -1242,5 +1267,12 @@ fn undefined_expr() -> Box<Expr> {
     optional: false,
     span: DUMMY_SP,
     sym: JsWord::from("undefined"),
+  }))
+}
+
+fn empty_array_expr() -> Box<Expr> {
+  Box::new(Expr::Array(ArrayLit {
+    elems: vec![],
+    span: DUMMY_SP
   }))
 }

@@ -93,7 +93,21 @@ impl VirtualMachine {
   }
 
   pub fn bind_module_items(&mut self, items: &[ModuleItem]) {
-    self.bind_stmts(items);
+    items.iter().for_each(|item| match item {
+      ModuleItem::ModuleDecl(decl) => self.bind_module_decl(decl),
+      ModuleItem::Stmt(stmt) => self.bind_stmt(stmt),
+    });
+  }
+
+  pub fn bind_module_decl(&mut self, decl: &ModuleDecl) {
+    match decl {
+      ModuleDecl::Import(import) => import.specifiers.iter().for_each(|spec| match spec {
+        ImportSpecifier::Default(default) => self.bind_ident(&default.local),
+        ImportSpecifier::Named(name) => self.bind_ident(&name.local),
+        ImportSpecifier::Namespace(namespace) => self.bind_ident(&namespace.local),
+      }),
+      _ => {}
+    }
   }
 
   pub fn bind_block(&mut self, block: &BlockStmt) {
@@ -105,14 +119,18 @@ impl VirtualMachine {
     T: StmtLike,
   {
     stmts.iter().for_each(|stmt| match stmt.as_stmt() {
-      Some(stmt) => match stmt {
-        Stmt::Decl(Decl::Class(class_decl)) => self.bind_class_decl(class_decl),
-        Stmt::Decl(Decl::Var(var)) => self.bind_var_decl(var),
-        Stmt::Decl(Decl::Fn(func)) => self.bind_ident(&func.ident),
-        _ => {}
-      },
+      Some(stmt) => self.bind_stmt(stmt),
       _ => {}
     });
+  }
+
+  fn bind_stmt(&mut self, stmt: &Stmt) {
+    match stmt {
+      Stmt::Decl(Decl::Class(class_decl)) => self.bind_class_decl(class_decl),
+      Stmt::Decl(Decl::Var(var)) => self.bind_var_decl(var),
+      Stmt::Decl(Decl::Fn(func)) => self.bind_ident(&func.ident),
+      _ => {}
+    }
   }
 
   pub fn bind_class_decl(&mut self, class_decl: &ClassDecl) {

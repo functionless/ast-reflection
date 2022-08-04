@@ -172,12 +172,12 @@ impl VisitMut for ClosureDecorator {
   //     })
   //     .collect();
 
-  //   // class.body.iter().for_each(|member| match member {
-  //   //   ClassMember::Constructor(ctor) => {
-  //   //     ctor.body.iter().for_each(|body| {});
-  //   //   }
-  //   //   _ => {}
-  //   // });
+  //   class.body.iter().for_each(|member| match member {
+  //     ClassMember::Constructor(ctor) => {
+  //       ctor.body.iter().for_each(|body| {});
+  //     }
+  //     _ => {}
+  //   });
 
   //   class.visit_mut_children_with(self);
 
