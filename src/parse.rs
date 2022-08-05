@@ -26,7 +26,7 @@ impl ClosureDecorator {
       vec![
         ident
           .as_ref()
-          .map(|i| self.parse_ident(&i))
+          .map(|i| self.parse_ident(&i, false))
           .unwrap_or(undefined_expr()),
         class
           .super_class
@@ -80,7 +80,7 @@ impl ClosureDecorator {
                       Node::ParameterDecl,
                       vec![
                         //
-                        self.parse_ident(&i),
+                        self.parse_ident(&i, false),
                       ],
                       
                     ),
@@ -503,7 +503,7 @@ impl ClosureDecorator {
         ],
       ),
       Expr::Fn(function) => self.parse_function_expr(&function),
-      Expr::Ident(id) => self.parse_ident_or_reference(id),
+      Expr::Ident(id) => self.parse_ident(id, true),
       Expr::Invalid(_invalid) => self.new_error_node("Syntax Error"),
       Expr::JSXElement(_jsx_element) => self.new_error_node("not sure what to do with JSXElement"),
       Expr::JSXEmpty(_jsx_empty) => self.new_error_node("not sure what to do with JSXEmpty"),
@@ -589,7 +589,7 @@ impl ClosureDecorator {
                   ),
                   Prop::Shorthand(ident) => self.new_node(
                     Node::PropAssignExpr,
-                    vec![self.parse_ident(ident), self.parse_ident_or_reference(ident)],
+                    vec![self.parse_ident(ident, false), self.parse_ident(ident, true)],
                   ),
                 },
                 PropOrSpread::Spread(spread) => self.new_node(
@@ -649,7 +649,7 @@ impl ClosureDecorator {
         vec![
           self.new_node(Node::SuperKeyword, vec![]),
           match &super_prop.prop {
-            SuperProp::Ident(ident) => self.parse_ident(ident),
+            SuperProp::Ident(ident) => self.parse_ident(ident, false),
             SuperProp::Computed(comp) => self.new_node(
               Node::ComputedPropertyNameExpr,
               vec![self.parse_expr(comp.expr.as_ref())],
@@ -822,7 +822,7 @@ impl ClosureDecorator {
       vec![
         self.parse_expr(member.obj.as_ref()),
         match &member.prop {
-          MemberProp::Ident(ident) => self.parse_ident(ident),
+          MemberProp::Ident(ident) => self.parse_ident(ident, false),
           MemberProp::PrivateName(private_name) => self.new_node(
             Node::PrivateIdentifier,
             vec![Box::new(Expr::Lit(Lit::Str(Str {
@@ -949,7 +949,7 @@ impl ClosureDecorator {
         Node::ComputedPropertyNameExpr,
         vec![self.parse_expr(c.expr.as_ref())],
       ),
-      PropName::Ident(i) => self.parse_ident(i),
+      PropName::Ident(i) => self.parse_ident(i, false),
       PropName::Num(n) => self.new_node(
         Node::NumberLiteralExpr,
         vec![Box::new(Expr::Lit(Lit::Num(n.clone())))],
@@ -1020,8 +1020,8 @@ impl ClosureDecorator {
     )
   }
 
-  fn parse_ident_or_reference(&self, ident: &Ident) -> Box<Expr> {
-    if self.vm.is_id_visible(ident) {
+  fn parse_ident(&self, ident: &Ident, isRef: bool) -> Box<Expr> {
+    if isRef && self.vm.is_id_visible(ident) {
       // if this is a free variable, then create a new ReferenceExpr(() => ident)
       self.new_node(Node::ReferenceExpr, vec![
         str(&ident.sym),
@@ -1037,13 +1037,7 @@ impl ClosureDecorator {
         num(ident.to_id().1.as_u32()),
         Box::new(Expr::Ident(quote_ident!("__filename")))
       ])
-    } else {
-      self.parse_ident(ident)
-    }
-  }
-
-  fn parse_ident(&self, ident: &Ident) -> Box<Expr> {
-    if &ident.sym == "undefined" {
+    } else if isRef && &ident.sym == "undefined" {
       self.new_node(
         Node::UndefinedLiteralExpr,
         vec![],
@@ -1129,13 +1123,13 @@ impl ClosureDecorator {
                   match &assign.value {
                     // {key: value}
                     Some(value) => vec![
-                      self.parse_ident(&assign.key),
+                      self.parse_ident(&assign.key, true),
                       false_expr(),
                       undefined_expr(),
                       self.parse_expr(value.as_ref()),
                     ],
                     // {key}
-                    None => vec![self.parse_ident(&assign.key), false_expr()],
+                    None => vec![self.parse_ident(&assign.key, false), false_expr()],
                   },
                   
                 ),
@@ -1181,7 +1175,7 @@ impl ClosureDecorator {
         ],
       ),
       Pat::Expr(expr) => self.parse_expr(expr),
-      Pat::Ident(ident) => self.parse_ident(ident),
+      Pat::Ident(ident) => self.parse_ident(ident, false),
       Pat::Invalid(_invalid) => self.new_error_node("Invalid Node"),
       Pat::Rest(rest) => self.new_node(Node::BindingElem, vec![self.parse_pat(rest.arg.as_ref()), true_expr()]),
     }
