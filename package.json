@@ -1,0 +1,22 @@
+{
+  "name": "swc-closure",
+  "version": "0.1.0",
+  "description": "",
+  "author": {
+    "name": "Sam Goodwin",
+    "email": "sam@functionless.org",
+    "url": "https://functionless.org"
+  },
+  "license": "ISC",
+  "keywords": [
+    "swc-plugin"
+  ],
+  "main": "swc_closure.wasm",
+  "scripts": {
+    "prepublishOnly": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/swc_closure.wasm .",
+    "release": "yarn prepublishOnly"
+  },
+  "files": [
+    "swc_closure.wasm"
+  ]
+}
