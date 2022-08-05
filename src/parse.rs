@@ -503,27 +503,7 @@ impl ClosureDecorator {
         ],
       ),
       Expr::Fn(function) => self.parse_function_expr(&function),
-      Expr::Ident(id) => {
-        if self.vm.is_id_visible(id) {
-          // if this is a free variable, then create a new ReferenceExpr(() => ident)
-          self.new_node(Node::ReferenceExpr, vec![
-            str(&id.sym),
-            Box::new(Expr::Arrow(ArrowExpr {
-              is_async: false,
-              is_generator: false,
-              params: vec![],
-              return_type: None,
-              span: DUMMY_SP,
-              type_params: None,
-              body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(id.clone())))
-            })),
-            num(id.to_id().1.as_u32()),
-            Box::new(Expr::Ident(quote_ident!("__filename")))
-          ])
-        } else {
-          self.parse_ident(id)
-        }
-      },
+      Expr::Ident(id) => self.parse_ident_or_reference(id),
       Expr::Invalid(_invalid) => self.new_error_node("Syntax Error"),
       Expr::JSXElement(_jsx_element) => self.new_error_node("not sure what to do with JSXElement"),
       Expr::JSXEmpty(_jsx_empty) => self.new_error_node("not sure what to do with JSXEmpty"),
@@ -609,8 +589,7 @@ impl ClosureDecorator {
                   ),
                   Prop::Shorthand(ident) => self.new_node(
                     Node::PropAssignExpr,
-                    vec![self.parse_ident(ident), self.parse_ident(ident)],
-                    
+                    vec![self.parse_ident(ident), self.parse_ident_or_reference(ident)],
                   ),
                 },
                 PropOrSpread::Spread(spread) => self.new_node(
@@ -1041,9 +1020,30 @@ impl ClosureDecorator {
     )
   }
 
+  fn parse_ident_or_reference(&self, ident: &Ident) -> Box<Expr> {
+    if self.vm.is_id_visible(ident) {
+      // if this is a free variable, then create a new ReferenceExpr(() => ident)
+      self.new_node(Node::ReferenceExpr, vec![
+        str(&ident.sym),
+        Box::new(Expr::Arrow(ArrowExpr {
+          is_async: false,
+          is_generator: false,
+          params: vec![],
+          return_type: None,
+          span: DUMMY_SP,
+          type_params: None,
+          body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(ident.clone())))
+        })),
+        num(ident.to_id().1.as_u32()),
+        Box::new(Expr::Ident(quote_ident!("__filename")))
+      ])
+    } else {
+      self.parse_ident(ident)
+    }
+  }
+
   fn parse_ident(&self, ident: &Ident) -> Box<Expr> {
-    let id = ident.to_id();
-    if &id.0 == "undefined" {
+    if &ident.sym == "undefined" {
       self.new_node(
         Node::UndefinedLiteralExpr,
         vec![],
