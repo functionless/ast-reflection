@@ -1,3 +1,5 @@
+use std::iter;
+
 use swc_common::{util::take::Take, DUMMY_SP};
 use swc_common::{BytePos, Span, SyntaxContext};
 use swc_ecma_visit::VisitMut;
@@ -86,30 +88,25 @@ impl VisitMut for ClosureDecorator {
     self.vm.bind_module_items(items);
 
     // extract statements to register hoisted function declarations
-    let register_stmts: Vec<ModuleItem> = items
+    let register_stmts = items
       .iter()
-      .filter_map(|item| match item {
-        ModuleItem::Stmt(stmt) => Some(stmt),
-        _ => None,
-      })
-      .filter_map(|stmt| self.register_stmt_if_func_decl(stmt))
-      .map(|stmt| ModuleItem::Stmt(stmt))
-      .collect();
+      .filter_map(ModuleItem::as_stmt)
+      .filter_map(|item| self.register_stmt_if_func_decl(item))
+      .map(|stmt| ModuleItem::Stmt(stmt));
+
+    // prepend the __fnl_func calls to the top of the module
+    let new_stmts: Vec<ModuleItem> = vec![
+      ModuleItem::Stmt(Stmt::Decl(create_register_function())),
+      ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
+    ]
+    .into_iter()
+    .chain(register_stmts)
+    .collect();
 
     // transform each of the statements in the module
     items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
 
-    // finally, prepend the __fnl_func calls to the top of the module
-    prepend_stmts(items, register_stmts.into_iter());
-
-    prepend_stmts(
-      items,
-      vec![
-        ModuleItem::Stmt(Stmt::Decl(create_register_function())),
-        ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
-      ]
-      .into_iter(),
-    );
+    prepend_stmts(items, new_stmts.into_iter());
   }
 
   fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
@@ -217,19 +214,18 @@ impl VisitMut for ClosureDecorator {
     if is_bind.is_some() {
       let expr = is_bind.unwrap();
 
-      let mut args = vec![
+      let args = iter::once(
         // func
         ExprOrSpread {
           expr: Box::new(expr.take()),
           spread: None,
         },
-      ];
-      call.args.iter_mut().for_each(|arg| {
-        args.push(ExprOrSpread {
-          spread: None,
-          expr: arg.expr.take(),
-        })
-      });
+      )
+      .chain(call.args.iter_mut().map(|arg| ExprOrSpread {
+        spread: None,
+        expr: arg.expr.take(),
+      }))
+      .collect();
 
       *call = CallExpr {
         callee: Callee::Expr(Box::new(Expr::Ident(quote_ident!(BIND_FUNCTION_NAME)))),

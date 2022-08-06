@@ -175,10 +175,10 @@ impl ClosureDecorator {
     match decl {
       Decl::Class(class_decl) => self.parse_class_decl(class_decl),
       Decl::Fn(function) => self.parse_function_decl(function),
-      Decl::TsEnum(ts_enum) => panic!("enums not supported"),
-      Decl::TsInterface(interface) => panic!("interface not supported"),
-      Decl::TsModule(module) => panic!("module declarations not supported"),
-      Decl::TsTypeAlias(type_alias) => panic!("type alias not supported"),
+      Decl::TsEnum(_) => panic!("enums not supported"),
+      Decl::TsInterface(_) => panic!("interface not supported"),
+      Decl::TsModule(_) => panic!("module declarations not supported"),
+      Decl::TsTypeAlias(_) => panic!("type alias not supported"),
       Decl::Var(var_decl) => self.new_node(Node::VariableStmt, vec![self.parse_var_decl(var_decl)]),
     }
   }
@@ -1020,8 +1020,8 @@ impl ClosureDecorator {
     )
   }
 
-  fn parse_ident(&self, ident: &Ident, isRef: bool) -> Box<Expr> {
-    if isRef && self.vm.is_id_visible(ident) {
+  fn parse_ident(&self, ident: &Ident, is_ref: bool) -> Box<Expr> {
+    if is_ref && self.vm.is_id_visible(ident) {
       // if this is a free variable, then create a new ReferenceExpr(() => ident)
       self.new_node(Node::ReferenceExpr, vec![
         str(&ident.sym),
@@ -1037,7 +1037,7 @@ impl ClosureDecorator {
         num(ident.to_id().1.as_u32()),
         Box::new(Expr::Ident(quote_ident!("__filename")))
       ])
-    } else if isRef && &ident.sym == "undefined" {
+    } else if is_ref && &ident.sym == "undefined" {
       self.new_node(
         Node::UndefinedLiteralExpr,
         vec![],

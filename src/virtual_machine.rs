@@ -110,18 +110,14 @@ impl VirtualMachine {
     }
   }
 
-  pub fn bind_block(&mut self, block: &BlockStmt) {
-    self.bind_stmts(&block.stmts)
-  }
-
   pub fn bind_stmts<T>(&mut self, stmts: &[T])
   where
     T: StmtLike,
   {
-    stmts.iter().for_each(|stmt| match stmt.as_stmt() {
-      Some(stmt) => self.bind_stmt(stmt),
-      _ => {}
-    });
+    stmts
+      .iter()
+      .filter_map(|stmt| stmt.as_stmt())
+      .for_each(|stmt| self.bind_stmt(stmt));
   }
 
   fn bind_stmt(&mut self, stmt: &Stmt) {
@@ -135,16 +131,6 @@ impl VirtualMachine {
 
   pub fn bind_class_decl(&mut self, class_decl: &ClassDecl) {
     self.bind_ident(&class_decl.ident);
-  }
-
-  pub fn bind_all_constructor_params(&mut self, params: &[ParamOrTsParamProp]) {
-    params.iter().for_each(|param| match param {
-      ParamOrTsParamProp::Param(p) => self.bind_param(p),
-      ParamOrTsParamProp::TsParamProp(p) => match &p.param {
-        TsParamPropParam::Assign(assign) => self.bind_pat(assign.left.as_ref()),
-        TsParamPropParam::Ident(ident) => self.bind_ident(&ident.id),
-      },
-    })
   }
 
   /**
