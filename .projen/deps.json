@@ -1,18 +1,8 @@
 {
   "dependencies": [
     {
-      "name": "jest-junit",
-      "version": "^13",
-      "type": "build"
-    },
-    {
-      "name": "jest",
-      "version": "^27",
-      "type": "build"
-    },
-    {
       "name": "npm-check-updates",
-      "version": "^12",
+      "version": "^15",
       "type": "build"
     },
     {

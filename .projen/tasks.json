@@ -75,7 +75,12 @@
     },
     "compile": {
       "name": "compile",
-      "description": "Only compile"
+      "description": "Only compile",
+      "steps": [
+        {
+          "exec": "rm -rf dist && mkdir dist && cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm ./dist/"
+        }
+      ]
     },
     "default": {
       "name": "default",
@@ -148,30 +153,7 @@
     },
     "test": {
       "name": "test",
-      "description": "Run tests",
-      "steps": [
-        {
-          "exec": "jest --passWithNoTests --all --updateSnapshot"
-        }
-      ]
-    },
-    "test:update": {
-      "name": "test:update",
-      "description": "Update jest snapshots",
-      "steps": [
-        {
-          "exec": "jest --updateSnapshot"
-        }
-      ]
-    },
-    "test:watch": {
-      "name": "test:watch",
-      "description": "Run jest in watch mode",
-      "steps": [
-        {
-          "exec": "jest --watch"
-        }
-      ]
+      "description": "Run tests"
     },
     "unbump": {
       "name": "unbump",
