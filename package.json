@@ -14,12 +14,12 @@
     "reflection",
     "functionless"
   ],
-  "main": "ast_reflection.wasm",
+  "main": "dist/ast_reflection.wasm",
   "scripts": {
-    "build": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm .",
+    "build": "rm -rf dist && mkdir dist && cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm ./dist/",
     "release": "yarn build"
   },
   "files": [
-    "ast_reflection.wasm"
+    "dist/ast_reflection.wasm"
   ]
 }
