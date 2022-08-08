@@ -1,5 +1,5 @@
 {
-  "name": "swc-closure",
+  "name": "@functionless/ast-reflection",
   "version": "0.1.0",
   "description": "",
   "author": {
@@ -7,16 +7,19 @@
     "email": "sam@functionless.org",
     "url": "https://functionless.org"
   },
-  "license": "ISC",
+  "license": "Apache-2.0",
   "keywords": [
-    "swc-plugin"
+    "swc-plugin",
+    "ast",
+    "reflection",
+    "functionless"
   ],
-  "main": "swc_closure.wasm",
+  "main": "ast_reflection.wasm",
   "scripts": {
-    "prepublishOnly": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/swc_closure.wasm .",
+    "prepublishOnly": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm .",
     "release": "yarn prepublishOnly"
   },
   "files": [
-    "swc_closure.wasm"
+    "ast_reflection.wasm"
   ]
 }
