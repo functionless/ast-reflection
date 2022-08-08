@@ -31,6 +31,7 @@ jspm_packages/
 .yarn-integrity
 .cache
 /dist/
+/target/
 !/.projenrc.js
 !/.github/workflows/build.yml
 /dist/changelog.md

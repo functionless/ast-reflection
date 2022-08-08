@@ -1,2 +1,0 @@
-cargo:rustc-env=TYPENUM_BUILD_CONSTS=/Users/samgoodwin/workspaces/ast-reflection/target/wasm32-wasi/release/build/typenum-3113603710b2db51/out/consts.rs
-cargo:rustc-env=TYPENUM_BUILD_OP=/Users/samgoodwin/workspaces/ast-reflection/target/wasm32-wasi/release/build/typenum-3113603710b2db51/out/op.rs

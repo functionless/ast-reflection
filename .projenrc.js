@@ -6,7 +6,7 @@ const project = new javascript.NodeProject({
   jest: false,
   release: true,
   releaseToNpm: true,
-  gitignore: ["/dist/"],
+  gitignore: ["/dist/", "/target/"],
 });
 
 project.addPackageIgnore("/.gitattributes");
