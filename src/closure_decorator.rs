@@ -59,53 +59,68 @@ pub struct ClosureDecorator {
    */
   pub vm: VirtualMachine,
   /**
-   * An Identifier referencing the global Functionless value.
+   * An Identifier referencing the `register` interceptor function injected into all processed modules.
    */
-  pub functionless: Ident,
+  pub register: Ident,
+  /**
+   * An Identifier referencing the `bind` interceptor function injected into all processed modules.
+   */
+  pub bind: Ident,
 }
 
 impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
       vm: VirtualMachine::new(),
-      functionless: Ident {
-        span: Span {
-          // use syntax context of 0 for global lexical scope
-          // TODO: validate this works
-          ctxt: SyntaxContext::from_u32(0),
-          hi: BytePos(0),
-          lo: BytePos(0),
-        },
-        sym: JsWord::from(REGISTER_FUNCTION_NAME),
-        optional: false,
-      },
+      register: module_ident(REGISTER_FUNCTION_NAME),
+      bind: module_ident(BIND_FUNCTION_NAME),
     }
+  }
+}
+
+/**
+ * Creates an [Identifier](Ident) that points to a value declared in the top-level of a module.
+ *
+ * This means it has [SyntaxContext](SyntaxContext) of `0`.
+ */
+fn module_ident(name: &str) -> Ident {
+  Ident {
+    span: Span {
+      ctxt: SyntaxContext::from_u32(0),
+      hi: BytePos(0),
+      lo: BytePos(0),
+    },
+    sym: JsWord::from(name),
+    optional: false,
   }
 }
 
 impl VisitMut for ClosureDecorator {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
+    // bind all names from the Module-Block into lexical scope.
     self.vm.bind_module_items(items);
 
-    // extract statements to register hoisted function declarations
-    let register_stmts = items
-      .iter()
-      .filter_map(ModuleItem::as_stmt)
-      .filter_map(|item| self.register_stmt_if_func_decl(item))
-      .map(|stmt| ModuleItem::Stmt(stmt));
-
-    // prepend the __fnl_func calls to the top of the module
-    let new_stmts: Vec<ModuleItem> = vec![
+    let new_stmts: Vec<ModuleItem> = [
       ModuleItem::Stmt(Stmt::Decl(create_register_function())),
       ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
     ]
     .into_iter()
-    .chain(register_stmts)
+    .chain(
+      // discover all function declarations in the module and create a
+      // CallExpr to `register` that decorates each function with its AST.
+      items
+        .iter()
+        .filter_map(ModuleItem::as_stmt)
+        .filter_map(|item| self.register_stmt_if_func_decl(item))
+        .map(|stmt| ModuleItem::Stmt(stmt)),
+    )
     .collect();
 
-    // transform each of the statements in the module
+    // recursively visit and transform each of the statements in the module
     items.iter_mut().for_each(|stmt| stmt.visit_mut_with(self));
 
+    // prepend the `register` and `bind` function declarations
+    // and the `register` calls into the top of every module.
     prepend_stmts(items, new_stmts.into_iter());
   }
 
@@ -118,17 +133,23 @@ impl VisitMut for ClosureDecorator {
   }
 
   fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
+    // bind all names produced by statements in this block
     self.vm.bind_stmts(stmts);
 
-    // extract statements to register hoisted function declarations
+    // discover all function declarations in the block and create a
+    // CallExpr to `register` that decorates each function with its AST.
     let register_stmts: Vec<Stmt> = stmts
       .iter()
       .filter_map(|stmt| self.register_stmt_if_func_decl(stmt))
       .collect();
 
+    // recursively visit and transform each of the statements in the block
     stmts.visit_mut_children_with(self);
 
-    prepend_stmts(stmts, register_stmts.into_iter());
+    if register_stmts.len() > 0 {
+      // only bother doing the work of prepend if there are statements to prepend
+      prepend_stmts(stmts, register_stmts.into_iter());
+    }
   }
 
   // fn visit_mut_class(&mut self, class: &mut Class) {
@@ -200,7 +221,10 @@ impl VisitMut for ClosureDecorator {
   }
 
   fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
-    let is_bind = match &mut call.callee {
+    // detect if this looks like a call to Function.bind
+    // e.g. `foo.bind(self)`
+    // in general: `<expr>.bind(...<args>)`
+    let maybe_bind_expr = match &mut call.callee {
       Callee::Expr(expr) => match expr.as_mut() {
         Expr::Member(member) => match &member.prop {
           MemberProp::Ident(ident) if &ident.sym == "bind" => Some(member.obj.as_mut()),
@@ -211,24 +235,25 @@ impl VisitMut for ClosureDecorator {
       _ => None,
     };
 
-    if is_bind.is_some() {
-      let expr = is_bind.unwrap();
+    if maybe_bind_expr.is_some() {
+      let expr = maybe_bind_expr.unwrap();
 
-      let args = iter::once(
-        // func
-        ExprOrSpread {
-          expr: Box::new(expr.take()),
-          spread: None,
-        },
-      )
+      let args = iter::once(ExprOrSpread {
+        expr: Box::new(expr.take()),
+        spread: None,
+      })
       .chain(call.args.iter_mut().map(|arg| ExprOrSpread {
         spread: None,
         expr: arg.expr.take(),
       }))
       .collect();
 
+      // replace the CallExpr with a call to the `bind` interceptor function
+      // foo.bind(bar)
+      // =>
+      // bind(foo, bar);
       *call = CallExpr {
-        callee: Callee::Expr(Box::new(Expr::Ident(quote_ident!(BIND_FUNCTION_NAME)))),
+        callee: Callee::Expr(Box::new(Expr::Ident(self.bind.clone()))),
         span: call.span.clone(),
         type_args: None,
         args,
@@ -251,6 +276,14 @@ impl VisitMut for ClosureDecorator {
 
         self.vm.exit();
 
+        // replace the arrow function with a call to the `register` interceptor function
+        // that decorates the function with its AST
+        // () => {..}
+        // =>
+        // register(
+        //   () => {..}, // original arrow
+        //   () => [..], // function that produces the arrow's AST
+        // )
         *expr = *self.register_mut_ast(&mut Expr::Arrow(arrow.take()), ast);
       }
       Expr::Fn(func) if func.function.body.is_some() => {
@@ -265,6 +298,14 @@ impl VisitMut for ClosureDecorator {
 
         func.function.body.visit_mut_with(self);
 
+        // replace the function expression with a call to the `register` interceptor function
+        // that decorates the function with its AST
+        // function foo() {..}
+        // =>
+        // register(
+        //   function foo() {..}, // original function expression
+        //   () => [..], // function that produces the function expression's AST
+        // )
         *expr = *self.register_mut_ast(&mut Expr::Fn(func.take()), ast);
 
         // exit the function parameters scope
@@ -303,7 +344,7 @@ impl ClosureDecorator {
       span: DUMMY_SP,
       type_args: None,
       // register(() =>  { .. }, () => new FunctionDecl([..]))
-      callee: Callee::Expr(Box::new(Expr::Ident(self.functionless.clone()))),
+      callee: Callee::Expr(Box::new(Expr::Ident(self.register.clone()))),
       args: vec![
         ExprOrSpread {
           expr: func,
