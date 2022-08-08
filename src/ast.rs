@@ -79,5 +79,9 @@ pub enum Node {
   WhileStmt = 76,
   WithStmt = 77,
   YieldExpr = 78,
-  QuasiString = 79,
+  TemplateHead = 79,
+  TemplateSpan = 80,
+  TemplateMiddle = 81,
+  TemplateTail = 82,
+  NoSubstitutionTemplateLiteral = 83,
 }

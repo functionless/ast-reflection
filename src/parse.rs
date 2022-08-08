@@ -658,18 +658,12 @@ impl ClosureDecorator {
           },
         ],
       ),
-      Expr::TaggedTpl(tagged_template) => self.new_node(
-        Node::TaggedTemplateExpr,
-        vec![
-          self.parse_expr(tagged_template.tag.as_ref()),
-          self.parse_template(&tagged_template.tpl),
-        ],
-      ),
+      Expr::Tpl(tpl) => self.parse_template(tpl),
+      Expr::TaggedTpl(tagged_template) => self.new_node(Node::TaggedTemplateExpr, vec![
+        self.parse_expr(&tagged_template.tag),
+        self.parse_template(&tagged_template.tpl)
+      ]),
       Expr::This(_this) => self.new_node(Node::ThisExpr, vec![Box::new(expr.clone())]),
-      Expr::Tpl(template) => self.new_node(
-        Node::TemplateExpr,
-        vec![self.parse_template(&template)],
-      ),
       // erase <expr> as <type> - take <expr> only
       Expr::TsAs(ts_as) => self.parse_expr(&ts_as.expr),
       // erase <expr> as const - take <expr>
@@ -988,37 +982,37 @@ impl ClosureDecorator {
   }
 
   fn parse_template(&self, tpl: &Tpl) -> Box<Expr> {
-    Box::new(Expr::Array(ArrayLit {
-      elems: tpl
-        .exprs
-        .iter()
-        .zip(&tpl.quasis)
-        .flat_map(|(expr, quasi)| vec![self.parse_template_element(&quasi), self.parse_expr(expr)])
-        .chain(if tpl.quasis.len() > tpl.exprs.len() {
-          vec![self.parse_template_element(&tpl.quasis.last().unwrap())]
-        } else {
-          vec![]
-        })
-        .map(|expr| Some(ExprOrSpread { expr, spread: None }))
-        .collect(),
-      span: DUMMY_SP,
-    }))
+    if tpl.exprs.len() == 0 {
+      self.new_node(Node::NoSubstitutionTemplateLiteral, vec![
+        str(&tpl.quasis.first().unwrap().raw)
+      ])
+    } else {
+      self.new_node(Node::TemplateExpr, vec![
+        self.new_node(Node::TemplateHead, vec![]),
+        Box::new(Expr::Array(ArrayLit {
+          span:DUMMY_SP,
+          elems: tpl.exprs.iter().zip(tpl.quasis.iter().skip(1))
+          .map(|(expr, literal)| Some(ExprOrSpread {
+            expr: self.new_node(Node::TemplateSpan, vec![
+              // expr
+              self.parse_expr(expr),
+              // literal
+              self.new_node(
+                if literal.tail { Node::TemplateTail } else { Node::TemplateMiddle }, 
+                vec![Box::new(Expr::Lit(Lit::Str(Str {
+                  span: DUMMY_SP,
+                  raw: None,
+                  value: literal.raw.clone()
+                })))]
+              )
+            ]),
+            spread: None
+          })).collect()
+        }))
+      ])
+    }
   }
 
-  fn parse_template_element(&self, element: &TplElement) -> Box<Expr> {
-    self.new_node(
-      Node::QuasiString,
-      vec![
-        //
-        Box::new(Expr::Lit(Lit::Str(Str {
-          raw: None,
-          span: DUMMY_SP,
-          value: element.raw.clone(),
-        }))),
-      ],
-      
-    )
-  }
 
   fn parse_ident(&self, ident: &Ident, is_ref: bool) -> Box<Expr> {
     if is_ref && self.vm.is_id_visible(ident) {
