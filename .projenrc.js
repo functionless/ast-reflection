@@ -1,7 +1,7 @@
 const { javascript } = require("projen");
 const project = new javascript.NodeProject({
   name: "@functionless/ast-reflection",
-  main: "ast_reflection.wasm",
+  entrypoint: "ast_reflection.wasm",
   defaultReleaseBranch: "main",
   jest: false,
   release: true,
