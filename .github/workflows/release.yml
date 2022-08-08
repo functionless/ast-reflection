@@ -33,8 +33,10 @@ jobs:
           override: true
       - name: Install wasm32-wasi
         run: rustup target add wasm32-wasi
-      - name: build
-        run: yarn build
+      - name: Install dependencies
+        run: yarn install --check-files --frozen-lockfile
+      - name: release
+        run: npx projen release
       - name: Check for new commits
         id: git_remote
         run: echo ::set-output name=latest_commit::"$(git ls-remote origin -h ${{ github.ref }} | cut -f1)"

@@ -28,8 +28,10 @@ jobs:
           override: true
       - name: Install wasm32-wasi
         run: rustup target add wasm32-wasi
+      - name: Install dependencies
+        run: yarn install --check-files
       - name: build
-        run: yarn build
+        run: npx projen build
       - id: self_mutation
         name: Find mutations
         run: |-
