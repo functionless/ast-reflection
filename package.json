@@ -1,0 +1,25 @@
+{
+  "name": "@functionless/ast-reflection",
+  "version": "0.1.0",
+  "description": "",
+  "author": {
+    "name": "Sam Goodwin",
+    "email": "sam@functionless.org",
+    "url": "https://functionless.org"
+  },
+  "license": "Apache-2.0",
+  "keywords": [
+    "swc-plugin",
+    "ast",
+    "reflection",
+    "functionless"
+  ],
+  "main": "ast_reflection.wasm",
+  "scripts": {
+    "build": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm .",
+    "release": "yarn build"
+  },
+  "files": [
+    "ast_reflection.wasm"
+  ]
+}
