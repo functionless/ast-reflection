@@ -150,6 +150,21 @@ impl ClosureDecorator {
     )
   }
 
+  fn parse_pats_as_params(&self, pats: &[Pat]) -> Box<Expr> {
+    Box::new(Expr::Array(ArrayLit {
+      elems: pats
+        .iter()
+        .map(|pat| {
+          Some(ExprOrSpread {
+            spread: None,
+            expr: self.parse_pat_param(pat)
+          })
+        })
+        .collect(),
+      span: DUMMY_SP,
+    }))
+  }
+
   fn parse_params(&self, params: &[Param]) -> Box<Expr> {
     Box::new(Expr::Array(ArrayLit {
       elems: params
@@ -166,9 +181,29 @@ impl ClosureDecorator {
   }
 
   fn parse_param(&self, param: &Param) -> Box<Expr> {
-    self.new_node(Node::ParameterDecl, vec![
-      self.parse_pat(&param.pat)
-    ])
+    self.parse_pat_param(&param.pat)
+  }
+
+  fn parse_pat_param(&self, pat: &Pat) -> Box<Expr> {
+    self.new_node(Node::ParameterDecl, match pat {
+      // foo(...a)
+      Pat::Rest(rest) => vec![
+        self.parse_pat(rest.arg.as_ref()),
+        undefined_expr(),
+        true_expr() 
+      ],
+      // foo(a = b)
+      Pat::Assign(assign) => vec![
+        self.parse_pat(assign.left.as_ref()),
+        self.parse_expr(assign.right.as_ref()),
+        false_expr()
+      ],
+      pat => vec![
+        self.parse_pat(pat),
+        undefined_expr(),
+        false_expr() 
+      ]
+    })
   }
   
   fn parse_decl(&self, decl: &Decl) -> Box<Expr> {
@@ -186,8 +221,12 @@ impl ClosureDecorator {
   fn parse_stmt(&self, stmt: &Stmt) -> Box<Expr> {
     match stmt {
       Stmt::Block(block) => self.parse_block(block),
-      Stmt::Break(_break_stmt) => self.new_node(Node::BreakStmt, EMPTY_VEC),
-      Stmt::Continue(_continue_stmt) => self.new_node(Node::ContinueStmt, EMPTY_VEC),
+      Stmt::Break(break_stmt) => self.new_node(Node::BreakStmt, vec![
+        break_stmt.label.as_ref().map(|label| self.parse_ident(label, false) ).unwrap_or(undefined_expr())
+      ]),
+      Stmt::Continue(continue_stmt) => self.new_node(Node::ContinueStmt, vec![
+        continue_stmt.label.as_ref().map(|label| self.parse_ident(label, false) ).unwrap_or(undefined_expr())
+      ]),
       Stmt::Debugger(_debugger) => self.new_node(Node::DebuggerStmt, EMPTY_VEC),
       Stmt::Decl(decl) => self.parse_decl(decl),
       Stmt::DoWhile(do_while) => self.new_node(
@@ -257,6 +296,7 @@ impl ClosureDecorator {
           },
           self.parse_expr(&for_of.right),
           self.parse_stmt(for_of.body.as_ref()),
+          if for_of.await_token.is_some() { true_expr() } else { false_expr() }
         ],
       ),
       Stmt::If(if_stmt) => self.new_node(
@@ -278,15 +318,18 @@ impl ClosureDecorator {
       // for now, we just erase the label
       Stmt::Labeled(labelled) => self.new_node(
         Node::LabelledStmt,
-        vec![self.parse_stmt(&labelled.body)],
+        vec![
+          self.parse_ident(&labelled.label, false),
+          self.parse_stmt(&labelled.body)
+        ],
       ),
       Stmt::Return(return_stmt) => self.new_node(
         Node::ReturnStmt,
-        vec![match return_stmt.arg.as_ref() {
-          Some(arg) => self.parse_expr(&arg),
+        match return_stmt.arg.as_ref() {
+          Some(arg) => vec![self.parse_expr(&arg)],
           // encode an empty `return;` as `return undefined();`
-          None => self.new_node(Node::UndefinedLiteralExpr, EMPTY_VEC),
-        }],
+          None => vec![],
+        },
       ),
       // TODO: support switch - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Statements/switch
       Stmt::Switch(switch) => self.new_node(
@@ -421,28 +464,24 @@ impl ClosureDecorator {
             PatOrExpr::Expr(expr) => self.parse_expr(expr),
             PatOrExpr::Pat(pat) => self.parse_pat(pat),
           },
-          Box::new(Expr::Lit(Lit::Str(Str {
-            raw: None,
-            span: DUMMY_SP,
-            value: match assign.op {
-              AssignOp::Assign => JsWord::from("="),
-              AssignOp::AddAssign => JsWord::from("+="),
-              AssignOp::SubAssign => JsWord::from("-="),
-              AssignOp::MulAssign => JsWord::from("*="),
-              AssignOp::DivAssign => JsWord::from("/="),
-              AssignOp::ModAssign => JsWord::from("%="),
-              AssignOp::LShiftAssign => JsWord::from("<<="),
-              AssignOp::RShiftAssign => JsWord::from(">>="),
-              AssignOp::ZeroFillRShiftAssign => JsWord::from(">>>="),
-              AssignOp::BitOrAssign => JsWord::from("|="),
-              AssignOp::BitXorAssign => JsWord::from("^="),
-              AssignOp::BitAndAssign => JsWord::from("&="),
-              AssignOp::ExpAssign => JsWord::from("**="),
-              AssignOp::AndAssign => JsWord::from("&&="),
-              AssignOp::OrAssign => JsWord::from("||="),
-              AssignOp::NullishAssign => JsWord::from("??="),
-            },
-          }))),
+          str(match assign.op {
+            AssignOp::Assign => "=",
+            AssignOp::AddAssign => "+=",
+            AssignOp::SubAssign => "-=",
+            AssignOp::MulAssign => "*=",
+            AssignOp::DivAssign => "/=",
+            AssignOp::ModAssign => "%=",
+            AssignOp::LShiftAssign => "<<=",
+            AssignOp::RShiftAssign => ">>=",
+            AssignOp::ZeroFillRShiftAssign => ">>>=",
+            AssignOp::BitOrAssign => "|=",
+            AssignOp::BitXorAssign => "^=",
+            AssignOp::BitAndAssign => "&=",
+            AssignOp::ExpAssign => "**=",
+            AssignOp::AndAssign => "&&=",
+            AssignOp::OrAssign => "||=",
+            AssignOp::NullishAssign => "??=",
+          }),
           self.parse_expr(assign.right.as_ref()),
         ],
       ),
@@ -454,37 +493,33 @@ impl ClosureDecorator {
         Node::BinaryExpr,
         vec![
           self.parse_expr(binary_op.left.as_ref()),
-          Box::new(Expr::Lit(Lit::Str(Str {
-            span: DUMMY_SP,
-            raw: None,
-            value: match binary_op.op {
-              BinaryOp::Add => JsWord::from("+"),
-              BinaryOp::BitAnd => JsWord::from("&"),
-              BinaryOp::BitOr => JsWord::from("|"),
-              BinaryOp::BitXor => JsWord::from("^"),
-              BinaryOp::Div => JsWord::from("/"),
-              BinaryOp::EqEq => JsWord::from("=="),
-              BinaryOp::EqEqEq => JsWord::from("==="),
-              BinaryOp::Exp => JsWord::from("**"),
-              BinaryOp::Gt => JsWord::from(">"),
-              BinaryOp::GtEq => JsWord::from(">="),
-              BinaryOp::In => JsWord::from("in"),
-              BinaryOp::InstanceOf => JsWord::from("instanceof"),
-              BinaryOp::LogicalAnd => JsWord::from("&&"),
-              BinaryOp::LogicalOr => JsWord::from("||"),
-              BinaryOp::LShift => JsWord::from("<<"),
-              BinaryOp::Lt => JsWord::from("<"),
-              BinaryOp::LtEq => JsWord::from("<="),
-              BinaryOp::Mod => JsWord::from("%"),
-              BinaryOp::Mul => JsWord::from("*"),
-              BinaryOp::NotEq => JsWord::from("!="),
-              BinaryOp::NotEqEq => JsWord::from("!=="),
-              BinaryOp::NullishCoalescing => JsWord::from("??"),
-              BinaryOp::RShift => JsWord::from(">>"),
-              BinaryOp::Sub => JsWord::from("-"),
-              BinaryOp::ZeroFillRShift => JsWord::from(">>>"),
-            },
-          }))),
+          str(match binary_op.op {
+            BinaryOp::Add => "+",
+            BinaryOp::BitAnd => "&",
+            BinaryOp::BitOr => "|",
+            BinaryOp::BitXor => "^",
+            BinaryOp::Div => "/",
+            BinaryOp::EqEq => "==",
+            BinaryOp::EqEqEq => "===",
+            BinaryOp::Exp => "**",
+            BinaryOp::Gt => ">",
+            BinaryOp::GtEq => ">=",
+            BinaryOp::In => "in",
+            BinaryOp::InstanceOf => "instanceof",
+            BinaryOp::LogicalAnd => "&&",
+            BinaryOp::LogicalOr => "||",
+            BinaryOp::LShift => "<<",
+            BinaryOp::Lt => "<",
+            BinaryOp::LtEq => "<=",
+            BinaryOp::Mod => "%",
+            BinaryOp::Mul => "*",
+            BinaryOp::NotEq => "!=",
+            BinaryOp::NotEqEq => "!==",
+            BinaryOp::NullishCoalescing => "??",
+            BinaryOp::RShift => ">>",
+            BinaryOp::Sub => "-",
+            BinaryOp::ZeroFillRShift => ">>>",
+          }),
           self.parse_expr(binary_op.right.as_ref()),
         ],
       ),
@@ -616,11 +651,7 @@ impl ClosureDecorator {
       ),
       Expr::PrivateName(private_name) => self.new_node(
         Node::PrivateIdentifier,
-        vec![Box::new(Expr::Lit(Lit::Str(Str {
-          raw: None,
-          span: DUMMY_SP,
-          value: JsWord::from(format!("{}{}", "#", private_name.id.sym)),
-        })))],
+        vec![str(&format!("{}{}", "#", private_name.id.sym))],
       ),
       Expr::Seq(seq) => {
         if seq.exprs.len() < 2 {
@@ -633,11 +664,7 @@ impl ClosureDecorator {
             vec![
               //
               left,
-              Box::new(Expr::Lit(Lit::Str(Str {
-                raw: None,
-                span: DUMMY_SP,
-                value: JsWord::from(","),
-              }))),
+              str(","),
               self.parse_expr(right),
             ],
             
@@ -689,19 +716,15 @@ impl ClosureDecorator {
           Node::UnaryExpr,
           vec![
             // op
-            Box::new(Expr::Lit(Lit::Str(Str {
-              raw: None,
-              span: DUMMY_SP,
-              value: match unary.op {
-                UnaryOp::Minus => JsWord::from("-"),
-                UnaryOp::Plus => JsWord::from("+"),
-                UnaryOp::Bang => JsWord::from("!"),
-                UnaryOp::Tilde => JsWord::from("~"),
-                UnaryOp::TypeOf => panic!("unexpected typeof operator"),
-                UnaryOp::Void => panic!("unexpected void operator"),
-                UnaryOp::Delete => panic!("unexpected delete operator"),
-              },
-            }))),
+            str(match unary.op {
+              UnaryOp::Minus => "-",
+              UnaryOp::Plus => "+",
+              UnaryOp::Bang => "!",
+              UnaryOp::Tilde => "~",
+              UnaryOp::TypeOf => panic!("unexpected typeof operator"),
+              UnaryOp::Void => panic!("unexpected void operator"),
+              UnaryOp::Delete => panic!("unexpected delete operator"),
+            }),
             // expr
             self.parse_expr(unary.arg.as_ref()),
           ],
@@ -716,14 +739,10 @@ impl ClosureDecorator {
         },
         vec![
           // op
-          Box::new(Expr::Lit(Lit::Str(Str {
-            raw: None,
-            span: DUMMY_SP,
-            value: match update.op {
-              UpdateOp::PlusPlus => JsWord::from("++"),
-              UpdateOp::MinusMinus => JsWord::from("--"),
-            },
-          }))),
+          str(match update.op {
+            UpdateOp::PlusPlus => "++",
+            UpdateOp::MinusMinus => "--",
+          }),
           // expr
           self.parse_expr(update.arg.as_ref()),
         ],
@@ -819,11 +838,7 @@ impl ClosureDecorator {
           MemberProp::Ident(ident) => self.parse_ident(ident, false),
           MemberProp::PrivateName(private_name) => self.new_node(
             Node::PrivateIdentifier,
-            vec![Box::new(Expr::Lit(Lit::Str(Str {
-              raw: None,
-              span: DUMMY_SP,
-              value: JsWord::from(format!("#{}", private_name.id.sym)),
-            })))],
+            vec![str(&format!("#{}", private_name.id.sym))],
             
           ),
           MemberProp::Computed(comp) => self.parse_expr(comp.expr.as_ref()),
@@ -885,12 +900,7 @@ impl ClosureDecorator {
           self.new_node(
             Node::PrivateIdentifier,
             vec![
-              //
-              Box::new(Expr::Lit(Lit::Str(Str {
-                raw: None,
-                span: DUMMY_SP,
-                value: JsWord::from(format!("#{}", method.key.id.sym)),
-              }))),
+              str(&format!("#{}", method.key.id.sym)),
             ],
             
           ),
@@ -906,11 +916,7 @@ impl ClosureDecorator {
             Node::PrivateIdentifier,
             vec![
               //
-              Box::new(Expr::Lit(Lit::Str(Str {
-                raw: None,
-                span: DUMMY_SP,
-                value: JsWord::from(format!("#{}", prop.key.id.sym)),
-              }))),
+              str(&format!("#{}", prop.key.id.sym)),
             ],
             
           ),
@@ -969,7 +975,12 @@ impl ClosureDecorator {
             }))
             .collect(),
           span: DUMMY_SP
-        }))
+        })),
+        num(match var_decl.kind {
+          VarDeclKind::Const => 0,
+          VarDeclKind::Let => 1,
+          VarDeclKind::Var => 2,
+        })
       ]
     )
   }
@@ -988,7 +999,9 @@ impl ClosureDecorator {
       ])
     } else {
       self.new_node(Node::TemplateExpr, vec![
-        self.new_node(Node::TemplateHead, vec![]),
+        self.new_node(Node::TemplateHead, vec![
+          str(&tpl.quasis.first().unwrap().raw)
+        ]),
         Box::new(Expr::Array(ArrayLit {
           span:DUMMY_SP,
           elems: tpl.exprs.iter().zip(tpl.quasis.iter().skip(1))
@@ -999,11 +1012,7 @@ impl ClosureDecorator {
               // literal
               self.new_node(
                 if literal.tail { Node::TemplateTail } else { Node::TemplateMiddle }, 
-                vec![Box::new(Expr::Lit(Lit::Str(Str {
-                  span: DUMMY_SP,
-                  raw: None,
-                  value: literal.raw.clone()
-                })))]
+                vec![str(&literal.raw)]
               )
             ]),
             spread: None
@@ -1042,38 +1051,6 @@ impl ClosureDecorator {
         vec![str(&ident.sym)],
       )
     }
-  }
-
-  fn parse_pats_as_params(&self, pats: &[Pat]) -> Box<Expr> {
-    Box::new(Expr::Array(ArrayLit {
-      elems: pats
-        .iter()
-        .map(|pat| {
-          Some(ExprOrSpread {
-            spread: None,
-            expr: self.new_node(Node::ParameterDecl, vec![
-              self.parse_pat(pat)
-            ]),
-          })
-        })
-        .collect(),
-      span: DUMMY_SP,
-    }))
-  }
-
-  fn parse_pats(&self, pats: &[Pat]) -> Box<Expr> {
-    Box::new(Expr::Array(ArrayLit {
-      elems: pats
-        .iter()
-        .map(|pat| {
-          Some(ExprOrSpread {
-            spread: None,
-            expr: self.parse_pat(pat),
-          })
-        })
-        .collect(),
-      span: DUMMY_SP,
-    }))
   }
 
   fn parse_pat(&self, pat: &Pat) -> Box<Expr> {
@@ -1201,11 +1178,7 @@ impl ClosureDecorator {
   fn new_error_node(&self, message: &str) -> Box<Expr> {
     self.new_node(
       Node::Err,
-      vec![Box::new(Expr::Lit(Lit::Str(Str {
-        raw: None,
-        span: DUMMY_SP,
-        value: JsWord::from(message),
-      })))],
+      vec![str(message)],
     )
   }
 }
@@ -1220,11 +1193,11 @@ impl ClosureDecorator {
 //   }))
 // }
 
-fn str(str: &JsWord) -> Box<Expr> {
+fn str(str: &str) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Str(Str {
     raw: None,
     span: DUMMY_SP,
-    value: str.clone(),
+    value: JsWord::from(str),
   })))
 }
 
