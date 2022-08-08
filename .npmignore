@@ -14,4 +14,3 @@
 /rust-toolchain
 /rustfmt.toml
 /dist/
-/*.wasm

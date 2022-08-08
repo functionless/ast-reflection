@@ -32,6 +32,7 @@ jspm_packages/
 .cache
 /dist/
 /target/
+/ast_reflection.wasm
 !/.projenrc.js
 !/.github/workflows/build.yml
 /dist/changelog.md
