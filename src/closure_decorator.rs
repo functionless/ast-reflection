@@ -97,9 +97,6 @@ fn module_ident(name: &str) -> Ident {
 
 impl VisitMut for ClosureDecorator {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
-    // bind all names from the Module-Block into lexical scope.
-    self.vm.bind_module_items(items);
-
     let new_stmts: Vec<ModuleItem> = [
       ModuleItem::Stmt(Stmt::Decl(create_register_function())),
       ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
@@ -124,18 +121,7 @@ impl VisitMut for ClosureDecorator {
     prepend_stmts(items, new_stmts.into_iter());
   }
 
-  fn visit_mut_block_stmt(&mut self, block: &mut BlockStmt) {
-    self.vm.enter();
-
-    block.visit_mut_children_with(self);
-
-    self.vm.exit();
-  }
-
   fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
-    // bind all names produced by statements in this block
-    self.vm.bind_stmts(stmts);
-
     // discover all function declarations in the block and create a
     // CallExpr to `register` that decorates each function with its AST.
     let register_stmts: Vec<Stmt> = stmts
@@ -208,18 +194,6 @@ impl VisitMut for ClosureDecorator {
   //   }));
   // }
 
-  fn visit_mut_params(&mut self, params: &mut Vec<Param>) {
-    self.vm.bind_all_params(params);
-  }
-
-  fn visit_mut_pats(&mut self, pats: &mut Vec<Pat>) {
-    self.vm.bind_all_pats(pats);
-  }
-
-  fn visit_mut_pat(&mut self, pat: &mut Pat) {
-    self.vm.bind_pat(pat);
-  }
-
   fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
     // detect if this looks like a call to Function.bind
     // e.g. `foo.bind(self)`
@@ -268,13 +242,7 @@ impl VisitMut for ClosureDecorator {
       Expr::Arrow(arrow) => {
         let ast = self.parse_arrow(arrow);
 
-        self.vm.enter();
-
-        arrow.params.visit_mut_with(self);
-
-        arrow.body.visit_mut_with(self);
-
-        self.vm.exit();
+        arrow.visit_mut_children_with(self);
 
         // replace the arrow function with a call to the `register` interceptor function
         // that decorates the function with its AST
@@ -289,14 +257,7 @@ impl VisitMut for ClosureDecorator {
       Expr::Fn(func) if func.function.body.is_some() => {
         let ast = self.parse_function_expr(&func);
 
-        // create a new scope for the function parameters
-        self.vm.enter();
-
-        self.vm.bind_all_params(&func.function.params);
-
-        func.function.params.visit_mut_with(self);
-
-        func.function.body.visit_mut_with(self);
+        func.visit_mut_children_with(self);
 
         // replace the function expression with a call to the `register` interceptor function
         // that decorates the function with its AST
@@ -307,9 +268,6 @@ impl VisitMut for ClosureDecorator {
         //   () => [..], // function that produces the function expression's AST
         // )
         *expr = *self.register_mut_ast(&mut Expr::Fn(func.take()), ast);
-
-        // exit the function parameters scope
-        self.vm.exit();
       }
       _ => {
         expr.visit_mut_children_with(self);
@@ -321,10 +279,10 @@ impl VisitMut for ClosureDecorator {
 impl ClosureDecorator {
   fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
     match stmt {
-      Stmt::Decl(Decl::Fn(func)) => Some(self.register_ast_stmt(
-        Box::new(Expr::Ident(func.ident.clone())),
-        self.parse_function_decl(&func),
-      )),
+      Stmt::Decl(Decl::Fn(func)) => {
+        let parse_func = self.parse_function_decl(&func);
+        Some(self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func))
+      }
       _ => None,
     }
   }
