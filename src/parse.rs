@@ -385,6 +385,8 @@ impl ClosureDecorator {
 
             self.parse_var_declarator(var_decl.decls.first().unwrap())
           }
+          //  for (i in items)
+          //       ^
           VarDeclOrPat::Pat(pat) => self.parse_pat(pat),
         };
 
@@ -416,6 +418,8 @@ impl ClosureDecorator {
 
             self.parse_var_declarator(var_decl.decls.first().unwrap())
           }
+          // for (i of items)
+          //      ^
           VarDeclOrPat::Pat(pat) => self.parse_pat(pat),
         };
 
