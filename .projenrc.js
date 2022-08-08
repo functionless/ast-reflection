@@ -7,6 +7,23 @@ const project = new javascript.NodeProject({
   release: true,
   releaseToNpm: true,
   gitignore: ["/dist/", "/target/"],
+  githubOptions: {},
+  workflowBootstrapSteps: [
+    {
+      name: "Install rust",
+      uses: "actions-rs/toolchain@v1",
+      with: {
+        toolchain: "stable",
+        components: "rustfmt",
+        profile: "minimal",
+        override: true,
+      },
+    },
+    {
+      name: "Install wasm32-wasi",
+      run: "rustup target add wasm32-wasi",
+    },
+  ],
 });
 
 project.addPackageIgnore("/.gitattributes");

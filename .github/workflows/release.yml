@@ -24,6 +24,15 @@ jobs:
         run: |-
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
+      - name: Install rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          components: rustfmt
+          profile: minimal
+          override: true
+      - name: Install wasm32-wasi
+        run: rustup target add wasm32-wasi
       - name: Install dependencies
         run: yarn install --check-files --frozen-lockfile
       - name: release
