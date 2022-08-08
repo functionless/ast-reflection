@@ -16,8 +16,8 @@
   ],
   "main": "ast_reflection.wasm",
   "scripts": {
-    "prepublishOnly": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm .",
-    "release": "yarn prepublishOnly"
+    "build": "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm .",
+    "release": "yarn build"
   },
   "files": [
     "ast_reflection.wasm"
