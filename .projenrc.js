@@ -36,6 +36,7 @@ project.addPackageIgnore("/Cargo.toml");
 project.addPackageIgnore("/rust-toolchain");
 project.addPackageIgnore("/rustfmt.toml");
 project.addPackageIgnore("/dist/");
+project.addPackageIgnore("/*.wasm");
 
 project.compileTask.exec(
   "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm ."
