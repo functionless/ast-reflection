@@ -110,6 +110,10 @@ impl VirtualMachine {
     }
   }
 
+  pub fn bind_block(&mut self, block: &BlockStmt) {
+    self.bind_stmts(&block.stmts);
+  }
+
   pub fn bind_stmts<T>(&mut self, stmts: &[T])
   where
     T: StmtLike,
@@ -149,7 +153,17 @@ impl VirtualMachine {
     self.bind_pat(&decl.name);
   }
 
-  pub fn bind_all_params(&mut self, params: &[Param]) {
+  pub fn bind_constructor_params(&mut self, params: &[ParamOrTsParamProp]) {
+    params.iter().for_each(|param| match param {
+      ParamOrTsParamProp::Param(param) => self.bind_param(param),
+      ParamOrTsParamProp::TsParamProp(param) => match &param.param {
+        TsParamPropParam::Ident(ident) => self.bind_ident(ident),
+        TsParamPropParam::Assign(assign) => self.bind_assign(assign),
+      },
+    });
+  }
+
+  pub fn bind_params(&mut self, params: &[Param]) {
     params.iter().for_each(|param| self.bind_param(&param));
   }
 
@@ -157,7 +171,7 @@ impl VirtualMachine {
     self.bind_pat(&param.pat);
   }
 
-  pub fn bind_all_pats(&mut self, pats: &[Pat]) {
+  pub fn bind_pats(&mut self, pats: &[Pat]) {
     pats.iter().for_each(|p| self.bind_pat(p));
   }
 
@@ -205,7 +219,7 @@ impl VirtualMachine {
       // (a = value) => {}
       Pat::Assign(assign) => {
         // bind the variable onto the scope
-        self.bind_pat(assign.left.as_ref());
+        self.bind_assign(assign);
       }
 
       Pat::Rest(rest) => {
@@ -214,5 +228,10 @@ impl VirtualMachine {
 
       _ => {}
     }
+  }
+
+  pub fn bind_assign(&mut self, assign: &AssignPat) {
+    // bind the variable onto the scope
+    self.bind_pat(assign.left.as_ref());
   }
 }
