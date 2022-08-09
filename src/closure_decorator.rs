@@ -6,6 +6,8 @@ use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, quote_ident};
 
+use crate::ast::Node;
+use crate::parse::new_node;
 use crate::virtual_machine::VirtualMachine;
 
 /**
@@ -316,7 +318,20 @@ impl ClosureDecorator {
             params: vec![],
             span: DUMMY_SP,
             type_params: None,
-            body: BlockStmtOrExpr::Expr(ast),
+            body: BlockStmtOrExpr::Expr(new_node(
+              Node::Root,
+              &DUMMY_SP,
+              vec![
+                // __filename
+                Box::new(Expr::Ident(Ident {
+                  optional: false,
+                  span: DUMMY_SP,
+                  sym: JsWord::from("__filename"),
+                })),
+                // entrypoint
+                ast,
+              ],
+            )),
           })),
           spread: None,
         },

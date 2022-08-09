@@ -2,6 +2,7 @@ use strum_macros::AsRefStr;
 
 #[derive(AsRefStr)]
 pub enum Node {
+  Root = -1,
   Argument = 0,
   ArrayBinding = 1,
   ArrayLiteralExpr = 2,

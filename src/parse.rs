@@ -3,14 +3,13 @@ use core::panic;
 use swc_common::source_map::Pos;
 use swc_common::{BytePos, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_plugin::ast::*;
-use swc_plugin::utils::quote_ident;
 
 use crate::ast::Node;
 use crate::closure_decorator::ClosureDecorator;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
 
-fn empty_span() -> Span {
+pub fn empty_span() -> Span {
   Span {
     ctxt: SyntaxContext::from_u32(0),
     hi: BytePos::from_u32(0),
@@ -1340,7 +1339,6 @@ impl ClosureDecorator {
             body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(ident.clone()))),
           })),
           num(ident.to_id().1.as_u32()),
-          Box::new(Expr::Ident(quote_ident!("__filename"))),
         ],
       )
     } else {
@@ -1457,7 +1455,7 @@ impl ClosureDecorator {
   }
 }
 
-fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
+pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
   let mut elems: Vec<Option<ExprOrSpread>> = vec![
     // kind
     Some(ExprOrSpread {
