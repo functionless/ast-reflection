@@ -1,16 +1,8 @@
 {
   "dependencies": [
     {
-      "name": "@swc/cli",
-      "type": "build"
-    },
-    {
       "name": "@swc/core",
       "version": "1.2.218",
-      "type": "build"
-    },
-    {
-      "name": "@swc/register",
       "type": "build"
     },
     {
@@ -28,16 +20,8 @@
       "type": "build"
     },
     {
-      "name": "@swc/cli",
-      "type": "peer"
-    },
-    {
       "name": "@swc/core",
       "version": "1.2.218",
-      "type": "peer"
-    },
-    {
-      "name": "@swc/register",
       "type": "peer"
     }
   ],
