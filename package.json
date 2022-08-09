@@ -19,7 +19,7 @@
   },
   "devDependencies": {
     "npm-check-updates": "^15",
-    "projen": "^0.61.2",
+    "projen": "^0.61.4",
     "standard-version": "^9"
   },
   "main": "ast_reflection.wasm",
