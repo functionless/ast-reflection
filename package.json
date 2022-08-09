@@ -18,9 +18,17 @@
     "projen": "npx projen"
   },
   "devDependencies": {
+    "@swc/cli": "0.1.57",
+    "@swc/core": "1.2.218",
+    "@swc/register": "0.1.10",
     "npm-check-updates": "^15",
     "projen": "^0.61.4",
     "standard-version": "^9"
+  },
+  "peerDependencies": {
+    "@swc/cli": "^0.1.57",
+    "@swc/core": "1.2.218",
+    "@swc/register": "^0.1.10"
   },
   "main": "ast_reflection.wasm",
   "license": "Apache-2.0",
