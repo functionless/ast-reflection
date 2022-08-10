@@ -68,7 +68,7 @@ impl ClosureDecorator {
     )
   }
 
-  pub fn parse_constructor(&mut self, ctor: &Constructor) -> Box<Expr> {
+  pub fn parse_ctor(&mut self, ctor: &Constructor) -> Box<Expr> {
     self.vm.bind_constructor_params(&ctor.params);
 
     new_node(
@@ -173,7 +173,7 @@ impl ClosureDecorator {
     )
   }
 
-  pub fn parse_method(&mut self, method: &ClassMethod) -> Box<Expr> {
+  pub fn parse_class_method(&mut self, method: &ClassMethod) -> Box<Expr> {
     self.vm.enter();
 
     self.vm.bind_params(&method.function.params);
@@ -1188,9 +1188,9 @@ impl ClosureDecorator {
             .unwrap_or(undefined_expr()),
         ],
       )),
-      ClassMember::Constructor(ctor) => Some(self.parse_constructor(ctor)),
+      ClassMember::Constructor(ctor) => Some(self.parse_ctor(ctor)),
       ClassMember::Empty(_) => None,
-      ClassMember::Method(method) => Some(self.parse_method(method)),
+      ClassMember::Method(method) => Some(self.parse_class_method(method)),
       ClassMember::PrivateMethod(method) => Some(self.parse_private_method(method)),
       ClassMember::PrivateProp(prop) => Some(new_node(
         Node::PropDecl,

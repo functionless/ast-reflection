@@ -148,61 +148,33 @@ impl VisitMut for ClosureDecorator {
     }
   }
 
-  // fn visit_mut_class(&mut self, class: &mut Class) {
-  //   let register_stmts: Vec<Stmt> = class
-  //     .body
-  //     .iter()
-  //     .filter_map(|member| match member {
-  //       ClassMember::Method(method) => Some(self.register_ast_stmt(
-  //         // global.__fnl__func(this.prototype.method_name, () => .. )
-  //         Box::new(Expr::Member(MemberExpr {
-  //           // this.prototype
-  //           obj: Box::new(Expr::Member(MemberExpr {
-  //             obj: Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
-  //             prop: MemberProp::Ident(quote_ident!("prototype")),
-  //             span: DUMMY_SP,
-  //           })),
-  //           span: DUMMY_SP,
-  //           prop: match &method.key {
-  //             PropName::Ident(id) => MemberProp::Ident(id.clone()),
-  //             PropName::Computed(expr) => MemberProp::Computed(expr.clone()),
-  //             prop => MemberProp::Computed(ComputedPropName {
-  //               span: DUMMY_SP,
-  //               expr: Box::new(Expr::Lit(match prop {
-  //                 PropName::BigInt(x) => Lit::BigInt(x.clone()),
-  //                 PropName::Num(x) => Lit::Num(x.clone()),
-  //                 PropName::Str(x) => Lit::Str(x.clone()),
-  //                 _ => panic!(""),
-  //               })),
-  //             }),
-  //           },
-  //         })),
-  //         self.parse_class_method(method),
-  //       )),
+  fn visit_mut_class(&mut self, class: &mut Class) {
+    let register_stmts: Vec<Stmt> = class
+      .body
+      .iter()
+      .filter_map(|member| match member {
+        ClassMember::Method(method) => Some(self.register_class_method(method)),
+        ClassMember::PrivateMethod(_method) => None,
+        ClassMember::Constructor(ctor) => Some(self.register_class_ctor(ctor)),
+        _ => None,
+      })
+      .collect();
 
-  //       ClassMember::PrivateMethod(_method) => None,
+    class.visit_mut_children_with(self);
 
-  //       _ => None,
-  //     })
-  //     .collect();
-
-  //   class.body.iter().for_each(|member| match member {
-  //     ClassMember::Constructor(ctor) => {
-  //       ctor.body.iter().for_each(|body| {});
-  //     }
-  //     _ => {}
-  //   });
-
-  //   class.visit_mut_children_with(self);
-
-  //   class.body.push(ClassMember::StaticBlock(StaticBlock {
-  //     span: DUMMY_SP,
-  //     body: BlockStmt {
-  //       span: DUMMY_SP,
-  //       stmts: register_stmts,
-  //     },
-  //   }));
-  // }
+    if register_stmts.len() > 0 {
+      prepend(
+        &mut class.body,
+        ClassMember::StaticBlock(StaticBlock {
+          span: DUMMY_SP,
+          body: BlockStmt {
+            span: DUMMY_SP,
+            stmts: register_stmts,
+          },
+        }),
+      );
+    }
+  }
 
   fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
     // detect if this looks like a call to Function.bind
@@ -286,6 +258,17 @@ impl VisitMut for ClosureDecorator {
   }
 }
 
+fn prepend<T>(to: &mut Vec<T>, pre: T) {
+  let mut buf = Vec::with_capacity(to.len() + 1);
+  // TODO: Optimize (maybe unsafe)
+
+  buf.push(pre);
+  buf.append(to);
+  debug_assert!(to.is_empty());
+
+  *to = buf
+}
+
 impl ClosureDecorator {
   fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
     match stmt {
@@ -297,6 +280,121 @@ impl ClosureDecorator {
   fn register_func_decl(&mut self, func: &FnDecl) -> Stmt {
     let parse_func = self.parse_function_decl(&func, true);
     self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func)
+  }
+
+  fn register_class_ctor(&mut self, ctor: &Constructor) -> Stmt {
+    let ctor_ast = self.parse_ctor(ctor);
+
+    // class Foo {
+    //  static {
+    //    register(this);
+    //               ^
+    //  }
+    // }
+    let ctor_ref = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
+
+    self.register_ast_stmt(ctor_ref, ctor_ast)
+  }
+
+  fn register_class_method(&mut self, method: &ClassMethod) -> Stmt {
+    let method_ast = self.parse_class_method(method);
+
+    let this = Box::new(if method.is_static {
+      // `this` if it is static
+      Expr::This(ThisExpr { span: DUMMY_SP })
+    } else {
+      // `this.prototype` if the method is on the prototype
+      Expr::Member(MemberExpr {
+        obj: Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
+        prop: MemberProp::Ident(quote_ident!("prototype")),
+        span: DUMMY_SP,
+      })
+    });
+
+    let method_name = match &method.key {
+      PropName::Ident(id) => MemberProp::Ident(id.clone()),
+      PropName::Computed(expr) => MemberProp::Computed(expr.clone()),
+      prop => MemberProp::Computed(ComputedPropName {
+        span: DUMMY_SP,
+        expr: Box::new(Expr::Lit(match prop {
+          PropName::BigInt(x) => Lit::BigInt(x.clone()),
+          PropName::Num(x) => Lit::Num(x.clone()),
+          PropName::Str(x) => Lit::Str(x.clone()),
+          _ => panic!(""),
+        })),
+      }),
+    };
+
+    fn get_property_descriptor(this: Box<Expr>, prop: &PropName) -> Box<Expr> {
+      Box::new(Expr::Call(CallExpr {
+        span: DUMMY_SP,
+        type_args: None,
+        // Object.getOwnPropertyDescriptor
+        callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+          obj: Box::new(Expr::Ident(Ident {
+            optional: false,
+            span: DUMMY_SP,
+            sym: JsWord::from("Object"),
+          })),
+          span: DUMMY_SP,
+          prop: MemberProp::Ident(Ident {
+            optional: false,
+            span: DUMMY_SP,
+            sym: JsWord::from("getOwnPropertyDescriptor"),
+          }),
+        }))),
+        args: vec![
+          ExprOrSpread {
+            expr: this,
+            spread: None,
+          },
+          ExprOrSpread {
+            expr: match prop {
+              PropName::Ident(id) => Box::new(Expr::Lit(Lit::Str(Str {
+                raw: None,
+                span: DUMMY_SP,
+                value: id.sym.clone(),
+              }))),
+              PropName::Str(_) => todo!(),
+              PropName::Num(_) => todo!(),
+              PropName::Computed(comp) => comp.expr.clone(),
+              PropName::BigInt(_) => todo!(),
+            },
+            spread: None,
+          },
+        ],
+      }))
+    }
+
+    // class Foo {
+    //   static {
+    //     register(this.prototype.method, ..)
+    //              ^-------------------^
+    //   }
+    //   method() { }
+    // }
+    let method_ref = match method.kind {
+      // this.prototype.method
+      MethodKind::Method => Box::new(Expr::Member(MemberExpr {
+        obj: this,
+        span: DUMMY_SP,
+        prop: method_name,
+      })),
+      // Object.getOwnPropertyDescriptor(this.prototype, "m").get
+      MethodKind::Getter => Box::new(Expr::Member(MemberExpr {
+        obj: get_property_descriptor(this, &method.key),
+        prop: MemberProp::Ident(quote_ident!("get")),
+        span: DUMMY_SP,
+      })),
+      // Object.getOwnPropertyDescriptor(this.prototype, "m").set
+      MethodKind::Setter => Box::new(Expr::Member(MemberExpr {
+        obj: get_property_descriptor(this, &method.key),
+        prop: MemberProp::Ident(quote_ident!("set")),
+        span: DUMMY_SP,
+      })),
+    };
+
+    self.register_ast_stmt(method_ref, method_ast)
   }
 
   fn register_ast_stmt(&self, expr: Box<Expr>, ast: Box<Expr>) -> Stmt {
