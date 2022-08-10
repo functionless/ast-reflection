@@ -240,7 +240,7 @@ impl VisitMut for ClosureDecorator {
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
-        let ast = self.parse_arrow(arrow);
+        let ast = self.parse_arrow(arrow, true);
 
         arrow.visit_mut_children_with(self);
 
@@ -255,7 +255,7 @@ impl VisitMut for ClosureDecorator {
         *expr = *self.register_mut_ast(&mut Expr::Arrow(arrow.take()), ast);
       }
       Expr::Fn(func) if func.function.body.is_some() => {
-        let ast = self.parse_function_expr(&func);
+        let ast = self.parse_function_expr(&func, true);
 
         func.visit_mut_children_with(self);
 
@@ -280,7 +280,7 @@ impl ClosureDecorator {
   fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
     match stmt {
       Stmt::Decl(Decl::Fn(func)) => {
-        let parse_func = self.parse_function_decl(&func);
+        let parse_func = self.parse_function_decl(&func, true);
         Some(self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func))
       }
       _ => None,

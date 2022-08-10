@@ -3,19 +3,26 @@ use core::panic;
 use swc_common::source_map::Pos;
 use swc_common::{BytePos, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_plugin::ast::*;
-use swc_plugin::utils::quote_ident;
 
 use crate::ast::Node;
 use crate::closure_decorator::ClosureDecorator;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
 
-fn empty_span() -> Span {
+pub fn empty_span() -> Span {
   Span {
     ctxt: SyntaxContext::from_u32(0),
     hi: BytePos::from_u32(0),
     lo: BytePos::from_u32(0),
   }
+}
+
+pub fn __filename() -> Box<Expr> {
+  Box::new(Expr::Ident(Ident {
+    optional: false,
+    span: empty_span(),
+    sym: JsWord::from("__filename"),
+  }))
 }
 
 impl ClosureDecorator {
@@ -103,23 +110,31 @@ impl ClosureDecorator {
     )
   }
 
-  pub fn parse_function_decl(&mut self, function: &FnDecl) -> Box<Expr> {
+  pub fn parse_function_decl(&mut self, function: &FnDecl, is_root: bool) -> Box<Expr> {
     self.parse_function(
       Node::FunctionDecl,
       Some(&function.ident),
       &function.function,
+      is_root,
     )
   }
 
-  pub fn parse_function_expr(&mut self, function: &FnExpr) -> Box<Expr> {
+  pub fn parse_function_expr(&mut self, function: &FnExpr, is_root: bool) -> Box<Expr> {
     self.parse_function(
       Node::FunctionExpr,
       function.ident.as_ref(),
       &function.function,
+      is_root,
     )
   }
 
-  fn parse_function(&mut self, kind: Node, name: Option<&Ident>, function: &Function) -> Box<Expr> {
+  fn parse_function(
+    &mut self,
+    kind: Node,
+    name: Option<&Ident>,
+    function: &Function,
+    is_root: bool,
+  ) -> Box<Expr> {
     self.vm.bind_params(&function.params);
 
     let params = self.parse_params(&function.params);
@@ -148,6 +163,11 @@ impl ClosureDecorator {
           true_expr()
         } else {
           false_expr()
+        },
+        if is_root {
+          __filename()
+        } else {
+          undefined_expr()
         },
       ],
     )
@@ -193,7 +213,7 @@ impl ClosureDecorator {
     node
   }
 
-  pub fn parse_arrow(&mut self, arrow: &ArrowExpr) -> Box<Expr> {
+  pub fn parse_arrow(&mut self, arrow: &ArrowExpr, is_root: bool) -> Box<Expr> {
     self.vm.enter();
 
     self.vm.bind_pats(&arrow.params);
@@ -225,6 +245,11 @@ impl ClosureDecorator {
           true_expr()
         } else {
           false_expr()
+        },
+        if is_root {
+          __filename()
+        } else {
+          undefined_expr()
         },
       ],
     );
@@ -293,7 +318,7 @@ impl ClosureDecorator {
   fn parse_decl(&mut self, decl: &Decl) -> Box<Expr> {
     match decl {
       Decl::Class(class_decl) => self.parse_class_decl(class_decl),
-      Decl::Fn(function) => self.parse_function_decl(function),
+      Decl::Fn(function) => self.parse_function_decl(function, false),
       Decl::TsEnum(_) => panic!("enums not supported"),
       Decl::TsInterface(_) => panic!("interface not supported"),
       Decl::TsModule(_) => panic!("module declarations not supported"),
@@ -671,7 +696,7 @@ impl ClosureDecorator {
           span: DUMMY_SP,
         }))],
       ),
-      Expr::Arrow(arrow) => self.parse_arrow(arrow),
+      Expr::Arrow(arrow) => self.parse_arrow(arrow, false),
       Expr::Assign(assign) => new_node(
         Node::BinaryExpr,
         &assign.span,
@@ -756,7 +781,7 @@ impl ClosureDecorator {
           self.parse_expr(&cond.alt.as_ref()),
         ],
       ),
-      Expr::Fn(function) => self.parse_function_expr(&function),
+      Expr::Fn(function) => self.parse_function_expr(&function, false),
       Expr::Ident(id) => self.parse_ident(id, true),
       Expr::Invalid(invalid) => new_error_node("Syntax Error", &invalid.span),
       Expr::JSXElement(jsx_element) => {
@@ -1340,7 +1365,6 @@ impl ClosureDecorator {
             body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(ident.clone()))),
           })),
           num(ident.to_id().1.as_u32()),
-          Box::new(Expr::Ident(quote_ident!("__filename"))),
         ],
       )
     } else {
@@ -1457,14 +1481,14 @@ impl ClosureDecorator {
   }
 }
 
-fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
+pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
   let mut elems: Vec<Option<ExprOrSpread>> = vec![
     // kind
     Some(ExprOrSpread {
       expr: Box::new(Expr::Lit(Lit::Num(Number {
         raw: None,
         span: DUMMY_SP,
-        value: kind as u32 as f64,
+        value: kind as i32 as f64,
       }))),
       spread: None,
     }),
