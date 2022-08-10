@@ -240,7 +240,7 @@ impl VisitMut for ClosureDecorator {
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
-        let ast = self.parse_arrow(arrow, false);
+        let ast = self.parse_arrow(arrow, true);
 
         arrow.visit_mut_children_with(self);
 
