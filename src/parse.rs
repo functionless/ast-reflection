@@ -5,7 +5,9 @@ use swc_common::{BytePos, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_plugin::ast::*;
 
 use crate::ast::Node;
+use crate::class_like::ClassLike;
 use crate::closure_decorator::ClosureDecorator;
+use crate::js_util::*;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
 
@@ -26,34 +28,31 @@ pub fn __filename() -> Box<Expr> {
 }
 
 impl ClosureDecorator {
-  pub fn parse_class_decl(&mut self, class_decl: &ClassDecl) -> Box<Expr> {
-    self.parse_class(Node::ClassDecl, Some(&class_decl.ident), &class_decl.class)
-  }
-
-  pub fn parse_class_expr(&mut self, class_expr: &ClassExpr) -> Box<Expr> {
-    self.parse_class(
-      Node::ClassExpr,
-      class_expr.ident.as_ref(),
-      &class_expr.class,
-    )
-  }
-
-  fn parse_class(&mut self, kind: Node, ident: Option<&Ident>, class: &Class) -> Box<Expr> {
+  /**
+   * Parse a [ClassDecl](ClassDecl) or [ClassExpr](ClassExpr) into its FunctionlessAST form.
+   */
+  pub fn parse_class_like<T>(&mut self, class_like: &T) -> Box<Expr>
+  where
+    T: ClassLike,
+  {
     new_node(
-      kind,
-      &class.span,
+      class_like.kind(),
+      &class_like.class().span,
       vec![
-        ident
+        class_like
+          .name()
           .as_ref()
           .map(|i| self.parse_ident(&i, false))
           .unwrap_or(undefined_expr()),
-        class
+        class_like
+          .class()
           .super_class
           .as_ref()
           .map(|sup| self.parse_expr(sup.as_ref()))
           .unwrap_or(undefined_expr()),
         Box::new(Expr::Array(ArrayLit {
-          elems: class
+          elems: class_like
+            .class()
             .body
             .iter()
             .map(|member| {
@@ -173,6 +172,15 @@ impl ClosureDecorator {
     )
   }
 
+  /**
+   * Parse a [ClassMethod](ClassMethod) to its AST form.
+   * ```ts
+   * class Foo {
+   *   // MethodDecl(Identifier("method"), BlockStmt([]), isAsync: false, isGenerator: false)
+   *   method() {}
+   * }
+   * ```
+   */
   pub fn parse_class_method(&mut self, method: &ClassMethod) -> Box<Expr> {
     self.vm.enter();
 
@@ -185,6 +193,8 @@ impl ClosureDecorator {
         self.parse_prop_name(&method.key),
         self.parse_params(&method.function.params),
         self.parse_block(method.function.body.as_ref().unwrap()),
+        bool_expr(method.function.is_async),
+        bool_expr(method.function.is_generator),
       ],
     );
 
@@ -205,6 +215,8 @@ impl ClosureDecorator {
         self.parse_private_name(&method.key),
         self.parse_params(&method.function.params),
         self.parse_block(method.function.body.as_ref().unwrap()),
+        bool_expr(method.function.is_async),
+        bool_expr(method.function.is_generator),
       ],
     );
 
@@ -317,7 +329,7 @@ impl ClosureDecorator {
 
   fn parse_decl(&mut self, decl: &Decl) -> Box<Expr> {
     match decl {
-      Decl::Class(class_decl) => self.parse_class_decl(class_decl),
+      Decl::Class(class_decl) => self.parse_class_like(class_decl),
       Decl::Fn(function) => self.parse_function_decl(function, false),
       Decl::TsEnum(_) => panic!("enums not supported"),
       Decl::TsInterface(_) => panic!("interface not supported"),
@@ -768,7 +780,7 @@ impl ClosureDecorator {
       ),
       Expr::Call(call) => self.parse_callee(&call.callee, &call.args, false, &call.span),
       // TODO: extract properties from ts-parameters
-      Expr::Class(class_expr) => self.parse_class_expr(class_expr),
+      Expr::Class(class_expr) => self.parse_class_like(class_expr),
       Expr::Cond(cond) => new_node(
         Node::ConditionExpr,
         &cond.span,
@@ -1537,61 +1549,6 @@ pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
 
 fn new_error_node(message: &str, span: &Span) -> Box<Expr> {
   new_node(Node::Err, span, vec![str(message)])
-}
-
-// fn arr(elems: Vec<Box<Expr>>) -> Box<Expr> {
-//   Box::new(Expr::Array(ArrayLit {
-//     elems: elems.iter().map(|expr| Some(ExprOrSpread {
-//       expr: expr.clone(),
-//       spread: None
-//     })).collect(),
-//     span: DUMMY_SP
-//   }))
-// }
-
-fn str(str: &str) -> Box<Expr> {
-  Box::new(Expr::Lit(Lit::Str(Str {
-    raw: None,
-    span: DUMMY_SP,
-    value: JsWord::from(str),
-  })))
-}
-
-fn num(i: u32) -> Box<Expr> {
-  Box::new(Expr::Lit(Lit::Num(Number {
-    raw: None,
-    span: DUMMY_SP,
-    value: i as u32 as f64,
-  })))
-}
-
-fn true_expr() -> Box<Expr> {
-  Box::new(Expr::Lit(Lit::Bool(Bool {
-    span: DUMMY_SP,
-    value: true,
-  })))
-}
-
-fn false_expr() -> Box<Expr> {
-  Box::new(Expr::Lit(Lit::Bool(Bool {
-    span: DUMMY_SP,
-    value: false,
-  })))
-}
-
-fn undefined_expr() -> Box<Expr> {
-  Box::new(Expr::Ident(Ident {
-    optional: false,
-    span: DUMMY_SP,
-    sym: JsWord::from("undefined"),
-  }))
-}
-
-fn empty_array_expr() -> Box<Expr> {
-  Box::new(Expr::Array(ArrayLit {
-    elems: vec![],
-    span: DUMMY_SP,
-  }))
 }
 
 fn get_expr_span<'a>(expr: &'a Expr) -> &'a Span {

@@ -6,6 +6,8 @@ use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, quote_ident};
 
+use crate::class_like::ClassLike;
+use crate::prepend::prepend;
 use crate::virtual_machine::VirtualMachine;
 
 /**
@@ -148,32 +150,12 @@ impl VisitMut for ClosureDecorator {
     }
   }
 
-  fn visit_mut_class(&mut self, class: &mut Class) {
-    let register_stmts: Vec<Stmt> = class
-      .body
-      .iter()
-      .filter_map(|member| match member {
-        ClassMember::Method(method) => Some(self.register_class_method(method)),
-        ClassMember::PrivateMethod(_method) => None,
-        ClassMember::Constructor(ctor) => Some(self.register_class_ctor(ctor)),
-        _ => None,
-      })
-      .collect();
+  fn visit_mut_class_decl(&mut self, class_decl: &mut ClassDecl) {
+    self.visit_mut_class_like(class_decl);
+  }
 
-    class.visit_mut_children_with(self);
-
-    if register_stmts.len() > 0 {
-      prepend(
-        &mut class.body,
-        ClassMember::StaticBlock(StaticBlock {
-          span: DUMMY_SP,
-          body: BlockStmt {
-            span: DUMMY_SP,
-            stmts: register_stmts,
-          },
-        }),
-      );
-    }
+  fn visit_mut_class_expr(&mut self, class_expr: &mut ClassExpr) {
+    self.visit_mut_class_like(class_expr);
   }
 
   fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
@@ -258,42 +240,56 @@ impl VisitMut for ClosureDecorator {
   }
 }
 
-fn prepend<T>(to: &mut Vec<T>, pre: T) {
-  let mut buf = Vec::with_capacity(to.len() + 1);
-  // TODO: Optimize (maybe unsafe)
-
-  buf.push(pre);
-  buf.append(to);
-  debug_assert!(to.is_empty());
-
-  *to = buf
-}
-
 impl ClosureDecorator {
-  fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
-    match stmt {
-      Stmt::Decl(Decl::Fn(func)) => Some(self.register_func_decl(func)),
-      _ => None,
-    }
-  }
-
-  fn register_func_decl(&mut self, func: &FnDecl) -> Stmt {
-    let parse_func = self.parse_function_decl(&func, true);
-    self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func)
-  }
-
-  fn register_class_ctor(&mut self, ctor: &Constructor) -> Stmt {
-    let ctor_ast = self.parse_ctor(ctor);
+  /**
+   * Generic visitor for ClassDecl and ClassExpr.
+   *
+   * 1. The static Class object is decorated with an AST describing the entire contents of the class.
+   * 2. Each Method, Getter and Setter within the class are decorated with their own AST.
+   * 3. For Getters and Setters, the PropertyDescriptor.{get|set} function is decorated.
+   * 4. All register calls are injected as a ClassStaticBlock at the very top of the class.
+   */
+  fn visit_mut_class_like<T>(&mut self, class_like: &mut T)
+  where
+    T: ClassLike,
+  {
+    let class_ast = self.parse_class_like(class_like);
 
     // class Foo {
     //  static {
     //    register(this);
-    //               ^
     //  }
     // }
-    let ctor_ref = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
+    let class_ref = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
 
-    self.register_ast_stmt(ctor_ref, ctor_ast)
+    let register_class_stmt = self.register_ast_stmt(class_ref, class_ast);
+
+    let register_stmts: Vec<Stmt> = class_like
+      .class()
+      .body
+      .iter()
+      .filter_map(|member| match member {
+        ClassMember::Method(method) => Some(self.register_class_method(method)),
+        ClassMember::PrivateMethod(_method) => None,
+        _ => None,
+      })
+      .chain(iter::once(register_class_stmt))
+      .collect();
+
+    class_like.class_mut().visit_mut_children_with(self);
+
+    if register_stmts.len() > 0 {
+      prepend(
+        &mut class_like.class_mut().body,
+        ClassMember::StaticBlock(StaticBlock {
+          span: DUMMY_SP,
+          body: BlockStmt {
+            span: DUMMY_SP,
+            stmts: register_stmts,
+          },
+        }),
+      );
+    }
   }
 
   fn register_class_method(&mut self, method: &ClassMethod) -> Stmt {
@@ -395,6 +391,18 @@ impl ClosureDecorator {
     };
 
     self.register_ast_stmt(method_ref, method_ast)
+  }
+
+  fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
+    match stmt {
+      Stmt::Decl(Decl::Fn(func)) => Some(self.register_func_decl(func)),
+      _ => None,
+    }
+  }
+
+  fn register_func_decl(&mut self, func: &FnDecl) -> Stmt {
+    let parse_func = self.parse_function_decl(&func, true);
+    self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func)
   }
 
   fn register_ast_stmt(&self, expr: Box<Expr>, ast: Box<Expr>) -> Stmt {
