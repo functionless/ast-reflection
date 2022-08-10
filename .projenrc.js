@@ -41,4 +41,6 @@ project.compileTask.exec(
   "cargo build --release --target wasm32-wasi && cp target/wasm32-wasi/release/ast_reflection.wasm ."
 );
 
+project.testTask.exec("sh ./tests/functionless.sh");
+
 project.synth();

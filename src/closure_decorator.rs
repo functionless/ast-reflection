@@ -107,8 +107,18 @@ impl VisitMut for ClosureDecorator {
       // CallExpr to `register` that decorates each function with its AST.
       items
         .iter()
-        .filter_map(ModuleItem::as_stmt)
-        .filter_map(|item| self.register_stmt_if_func_decl(item))
+        .filter_map(|item| match item {
+          ModuleItem::ModuleDecl(decl) => match decl {
+            ModuleDecl::ExportDecl(ex) => match &ex.decl {
+              // TODO: handle classes
+              Decl::Class(_) => None,
+              Decl::Fn(func) => Some(self.register_func_decl(func)),
+              _ => None,
+            },
+            _ => None,
+          },
+          ModuleItem::Stmt(stmt) => self.register_stmt_if_func_decl(stmt),
+        })
         .map(|stmt| ModuleItem::Stmt(stmt)),
     )
     .collect();
@@ -279,13 +289,16 @@ impl VisitMut for ClosureDecorator {
 impl ClosureDecorator {
   fn register_stmt_if_func_decl(&mut self, stmt: &Stmt) -> Option<Stmt> {
     match stmt {
-      Stmt::Decl(Decl::Fn(func)) => {
-        let parse_func = self.parse_function_decl(&func, true);
-        Some(self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func))
-      }
+      Stmt::Decl(Decl::Fn(func)) => Some(self.register_func_decl(func)),
       _ => None,
     }
   }
+
+  fn register_func_decl(&mut self, func: &FnDecl) -> Stmt {
+    let parse_func = self.parse_function_decl(&func, true);
+    self.register_ast_stmt(Box::new(Expr::Ident(func.ident.clone())), parse_func)
+  }
+
   fn register_ast_stmt(&self, expr: Box<Expr>, ast: Box<Expr>) -> Stmt {
     Stmt::Expr(ExprStmt {
       expr: self.register_ast(expr, ast),
