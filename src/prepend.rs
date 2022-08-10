@@ -1,10 +1,8 @@
-pub fn prepend<T>(to: &mut Vec<T>, pre: T) {
-  let mut buf = Vec::with_capacity(to.len() + 1);
-  // TODO: Optimize (maybe unsafe)
+use std::iter;
 
-  buf.push(pre);
-  buf.append(to);
-  debug_assert!(to.is_empty());
-
-  *to = buf
+/**
+ * Prepends an element to the front of a Vec.
+ */
+pub fn prepend<T>(to: &mut Vec<T>, element: T) {
+  *to = to.splice(0..0, iter::once(element)).collect();
 }

@@ -31,7 +31,7 @@ impl ClosureDecorator {
   /**
    * Parse a [ClassDecl](ClassDecl) or [ClassExpr](ClassExpr) into its FunctionlessAST form.
    */
-  pub fn parse_class_like<T>(&mut self, class_like: &T) -> Box<Expr>
+  pub fn parse_class_like<T>(&mut self, class_like: &T, is_root: bool) -> Box<Expr>
   where
     T: ClassLike,
   {
@@ -63,6 +63,11 @@ impl ClosureDecorator {
             .collect(),
           span: DUMMY_SP,
         })),
+        if is_root {
+          __filename()
+        } else {
+          undefined_expr()
+        },
       ],
     )
   }
@@ -329,7 +334,7 @@ impl ClosureDecorator {
 
   fn parse_decl(&mut self, decl: &Decl) -> Box<Expr> {
     match decl {
-      Decl::Class(class_decl) => self.parse_class_like(class_decl),
+      Decl::Class(class_decl) => self.parse_class_like(class_decl, false),
       Decl::Fn(function) => self.parse_function_decl(function, false),
       Decl::TsEnum(_) => panic!("enums not supported"),
       Decl::TsInterface(_) => panic!("interface not supported"),
@@ -780,7 +785,7 @@ impl ClosureDecorator {
       ),
       Expr::Call(call) => self.parse_callee(&call.callee, &call.args, false, &call.span),
       // TODO: extract properties from ts-parameters
-      Expr::Class(class_expr) => self.parse_class_like(class_expr),
+      Expr::Class(class_expr) => self.parse_class_like(class_expr, false),
       Expr::Cond(cond) => new_node(
         Node::ConditionExpr,
         &cond.span,

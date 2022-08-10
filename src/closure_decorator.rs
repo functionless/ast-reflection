@@ -253,7 +253,7 @@ impl ClosureDecorator {
   where
     T: ClassLike,
   {
-    let class_ast = self.parse_class_like(class_like);
+    let class_ast = self.parse_class_like(class_like, true);
 
     // class Foo {
     //  static {
