@@ -13,9 +13,10 @@ trap clean_up EXIT
 
 cd .test
 
-git clone --depth 1 git@github.com:functionless/functionless.git
+git clone --depth 1 https://github.com/functionless/functionless.git
 
 cd functionless
+
 yarn
 yarn link @functionless/ast-reflection
 yarn compile
