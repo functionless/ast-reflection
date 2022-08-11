@@ -8,6 +8,7 @@ use swc_plugin::utils::{prepend_stmts, quote_ident};
 
 use crate::class_like::ClassLike;
 use crate::prepend::prepend;
+use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
 
 /**
@@ -201,6 +202,37 @@ impl VisitMut for ClosureDecorator {
     call.visit_mut_children_with(self);
   }
 
+  fn visit_mut_prop(&mut self, prop: &mut Prop) {
+    match prop {
+      // { method() { } }
+      Prop::Method(method) => {
+        let ast = self.parse_method_like(
+          method,
+          None,
+          &concat_span(get_prop_name_span(&method.key), &method.function.span),
+        );
+
+        // re-write to
+        // { method: function method() { }}
+        let func = Box::new(Expr::Fn(FnExpr {
+          ident: match &method.key {
+            PropName::Ident(id) => Some(id.clone()),
+            _ => None,
+          },
+          function: method.function.take(),
+        }));
+
+        *prop = Prop::KeyValue(KeyValueProp {
+          key: method.key.take(),
+          value: self.register_ast(func, ast),
+        });
+      }
+      _ => {}
+    };
+
+    prop.visit_mut_children_with(self);
+  }
+
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
     match expr {
       Expr::Arrow(arrow) => {
@@ -295,7 +327,7 @@ impl ClosureDecorator {
   }
 
   fn register_class_method(&mut self, method: &ClassMethod, owned_by: Option<&Ident>) -> Stmt {
-    let method_ast = self.parse_class_method(method, owned_by);
+    let method_ast = self.parse_method_like(method, owned_by, &method.span);
 
     let this = Box::new(if method.is_static {
       // `this` if it is static

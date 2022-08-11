@@ -8,6 +8,8 @@ use crate::ast::Node;
 use crate::class_like::ClassLike;
 use crate::closure_decorator::ClosureDecorator;
 use crate::js_util::*;
+use crate::method_like::MethodLike;
+use crate::span::*;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
 
@@ -29,7 +31,7 @@ pub fn __filename() -> Box<Expr> {
 
 impl ClosureDecorator {
   /**
-   * Parse a [ClassDecl](ClassDecl) or [ClassExpr](ClassExpr) into its FunctionlessAST form.
+   * Parse a [ClassDe&cl](ClassDecl) or [ClassExpr](ClassExpr) into its FunctionlessAST form.
    */
   pub fn parse_class_like<T>(&mut self, class_like: &T, is_root: bool) -> Box<Expr>
   where
@@ -186,39 +188,71 @@ impl ClosureDecorator {
    * }
    * ```
    */
-  pub fn parse_class_method(
+  pub fn parse_method_like<M>(
     &mut self,
-    method: &ClassMethod,
+    method: &M,
     owned_by: Option<&Ident>,
-  ) -> Box<Expr> {
+    fallback_span: &Span,
+  ) -> Box<Expr>
+  where
+    M: MethodLike,
+  {
     self.vm.enter();
 
-    self.vm.bind_params(&method.function.params);
+    self.vm.bind_params(method.function().params.as_slice());
 
-    let node = new_node(
-      match method.kind {
-        MethodKind::Method => Node::MethodDecl,
-        MethodKind::Getter => Node::GetAccessorDecl,
-        MethodKind::Setter => Node::SetAccessorDecl,
-      },
-      &method.span,
-      vec![
-        self.parse_prop_name(&method.key),
-        self.parse_params(&method.function.params),
-        self.parse_block(method.function.body.as_ref().unwrap()),
-        bool_expr(method.function.is_async),
-        bool_expr(method.function.is_generator),
-        match owned_by {
-          Some(_) => undefined_expr(),
-          // this is the root, so provide the file name
-          None => __filename(),
-        },
-        bool_expr(method.is_static),
-        owned_by
-          .map(|i| self.parse_ident(i, true))
-          .unwrap_or(undefined_expr()),
-      ],
-    );
+    let node = match method.kind() {
+      MethodKind::Method => new_node(
+        Node::MethodDecl,
+        method.span().unwrap_or(fallback_span),
+        vec![
+          self.parse_prop_name(&method.key()),
+          self.parse_params(&method.function().params),
+          self.parse_block(method.function().body.as_ref().unwrap()),
+          bool_expr(method.function().is_async),
+          bool_expr(method.function().is_generator),
+          match owned_by {
+            Some(_) => undefined_expr(),
+            // this is the root, so provide the file name
+            None => __filename(),
+          },
+          bool_expr(method.is_static()),
+          owned_by
+            .map(|i| self.parse_ident(i, true))
+            .unwrap_or(undefined_expr()),
+        ],
+      ),
+      MethodKind::Getter => new_node(
+        Node::GetAccessorDecl,
+        &method.span().unwrap_or(fallback_span),
+        vec![
+          self.parse_prop_name(&method.key()),
+          self.parse_block(method.function().body.as_ref().unwrap()),
+          bool_expr(method.is_static()),
+          owned_by
+            .map(|i| self.parse_ident(i, true))
+            .unwrap_or(undefined_expr()),
+        ],
+      ),
+      MethodKind::Setter => new_node(
+        Node::SetAccessorDecl,
+        &method.span().unwrap_or(fallback_span),
+        vec![
+          self.parse_prop_name(&method.key()),
+          method
+            .function()
+            .params
+            .first()
+            .map(|param| self.parse_param(param))
+            .unwrap_or_else(undefined_expr),
+          self.parse_block(method.function().body.as_ref().unwrap()),
+          bool_expr(method.is_static()),
+          owned_by
+            .map(|i| self.parse_ident(i, true))
+            .unwrap_or(undefined_expr()),
+        ],
+      ),
+    };
 
     self.vm.exit();
 
@@ -885,7 +919,7 @@ impl ClosureDecorator {
           elems: object
             .props
             .iter()
-            .map(|prop| match prop {
+            .map(|prop_or_spread| match prop_or_spread {
               PropOrSpread::Prop(prop) => match prop.as_ref() {
                 // invalid according to SWC's docs on Prop::Assign
                 Prop::Assign(_assign) => panic!("Invalid Syntax in Object Literal"),
@@ -895,6 +929,8 @@ impl ClosureDecorator {
                   vec![
                     self.parse_prop_name(&getter.key),
                     self.parse_block(&getter.body.as_ref().unwrap()),
+                    false_expr(),
+                    undefined_expr(),
                   ],
                 ),
                 Prop::KeyValue(assign) => new_node(
@@ -908,15 +944,10 @@ impl ClosureDecorator {
                     self.parse_expr(assign.value.as_ref()),
                   ],
                 ),
-                Prop::Method(method) => new_node(
-                  Node::MethodDecl,
-                  &concat_span(get_prop_name_span(&method.key), &method.function.span),
-                  vec![
-                    //
-                    self.parse_prop_name(&method.key),
-                    self.parse_params(&method.function.params),
-                    self.parse_block(method.function.body.as_ref().unwrap()),
-                  ],
+                Prop::Method(method) => self.parse_method_like(
+                  method,
+                  None,
+                  &concat_span(&get_prop_name_span(&method.key), &method.function.span),
                 ),
                 Prop::Setter(setter) => new_node(
                   Node::SetAccessorDecl,
@@ -925,6 +956,8 @@ impl ClosureDecorator {
                     self.parse_prop_name(&setter.key),
                     self.parse_pat(&setter.param),
                     self.parse_block(setter.body.as_ref().unwrap()),
+                    false_expr(),
+                    undefined_expr(),
                   ],
                 ),
                 Prop::Shorthand(ident) => new_node(
@@ -1236,7 +1269,7 @@ impl ClosureDecorator {
       )),
       ClassMember::Constructor(ctor) => Some(self.parse_ctor(ctor)),
       ClassMember::Empty(_) => None,
-      ClassMember::Method(method) => Some(self.parse_class_method(method, owned_by)),
+      ClassMember::Method(method) => Some(self.parse_method_like(method, owned_by, &method.span)),
       ClassMember::PrivateMethod(method) => Some(self.parse_private_method(method, owned_by)),
       ClassMember::PrivateProp(prop) => Some(new_node(
         Node::PropDecl,
@@ -1583,131 +1616,4 @@ pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
 
 fn new_error_node(message: &str, span: &Span) -> Box<Expr> {
   new_node(Node::Err, span, vec![str(message)])
-}
-
-fn get_expr_span<'a>(expr: &'a Expr) -> &'a Span {
-  match expr {
-    Expr::Array(e) => &e.span,
-    Expr::Arrow(e) => &e.span,
-    Expr::Assign(e) => &e.span,
-    Expr::Await(e) => &e.span,
-    Expr::Bin(e) => &e.span,
-    Expr::Call(e) => &e.span,
-    Expr::Class(e) => &e.class.span,
-    Expr::Cond(e) => &e.span,
-    Expr::Fn(e) => &e.function.span,
-    Expr::Ident(e) => &e.span,
-    Expr::Invalid(e) => &e.span,
-    Expr::This(e) => &e.span,
-    Expr::Object(e) => &e.span,
-    Expr::Unary(e) => &e.span,
-    Expr::Update(e) => &e.span,
-    Expr::Member(e) => &e.span,
-    Expr::SuperProp(e) => &e.span,
-    Expr::New(e) => &e.span,
-    Expr::Seq(e) => &e.span,
-    Expr::Lit(e) => get_lit_span(e),
-    Expr::Tpl(e) => &e.span,
-    Expr::TaggedTpl(e) => &e.span,
-    Expr::Yield(e) => &e.span,
-    Expr::MetaProp(e) => &e.span,
-    Expr::Paren(e) => &e.span,
-    Expr::JSXMember(e) => get_jsx_object_span(&e.obj), // TODO: combine spans? this is wrong, why don't these nodes have spans?
-    Expr::JSXNamespacedName(e) => &e.name.span, // TODO: combine spans? this is wrong, why don't these nodes have spans?
-    Expr::JSXEmpty(e) => &e.span,
-    Expr::JSXElement(e) => &e.span,
-    Expr::JSXFragment(e) => &e.span,
-    Expr::TsTypeAssertion(e) => &e.span,
-    Expr::TsConstAssertion(e) => &e.span,
-    Expr::TsNonNull(e) => &e.span,
-    Expr::TsAs(e) => &e.span,
-    Expr::TsInstantiation(e) => &e.span,
-    Expr::PrivateName(e) => &e.span,
-    Expr::OptChain(e) => &e.span,
-  }
-}
-
-fn get_stmt_span<'a>(stmt: &'a Stmt) -> &'a Span {
-  match stmt {
-    Stmt::Block(s) => &s.span,
-    Stmt::Empty(s) => &s.span,
-    Stmt::Debugger(s) => &s.span,
-    Stmt::With(s) => &s.span,
-    Stmt::Return(s) => &s.span,
-    Stmt::Labeled(s) => &s.span,
-    Stmt::Break(s) => &s.span,
-    Stmt::Continue(s) => &s.span,
-    Stmt::If(s) => &s.span,
-    Stmt::Switch(s) => &s.span,
-    Stmt::Throw(s) => &s.span,
-    Stmt::Try(s) => &s.span,
-    Stmt::While(s) => &s.span,
-    Stmt::DoWhile(s) => &s.span,
-    Stmt::For(s) => &s.span,
-    Stmt::ForIn(s) => &s.span,
-    Stmt::ForOf(s) => &s.span,
-    Stmt::Decl(s) => get_decl_span(s),
-    Stmt::Expr(s) => &s.span,
-  }
-}
-
-fn get_decl_span<'a>(decl: &'a Decl) -> &'a Span {
-  match decl {
-    Decl::Class(d) => &d.class.span,
-    Decl::Fn(d) => &d.function.span,
-    Decl::Var(d) => &d.span,
-    Decl::TsInterface(d) => &d.span,
-    Decl::TsTypeAlias(d) => &d.span,
-    Decl::TsEnum(d) => &d.span,
-    Decl::TsModule(d) => &d.span,
-  }
-}
-
-fn get_lit_span<'a>(lit: &'a Lit) -> &'a Span {
-  match lit {
-    Lit::Str(l) => &l.span,
-    Lit::Bool(l) => &l.span,
-    Lit::Null(l) => &l.span,
-    Lit::Num(l) => &l.span,
-    Lit::BigInt(l) => &l.span,
-    Lit::Regex(l) => &l.span,
-    Lit::JSXText(l) => &l.span,
-  }
-}
-
-fn get_pat_span<'a>(pat: &'a Pat) -> &'a Span {
-  match pat {
-    Pat::Array(a) => &a.span,
-    Pat::Assign(a) => &a.span,
-    Pat::Expr(e) => get_expr_span(e),
-    Pat::Ident(i) => &i.span,
-    Pat::Invalid(i) => &i.span,
-    Pat::Object(o) => &o.span,
-    Pat::Rest(r) => &r.span,
-  }
-}
-
-fn get_prop_name_span<'a>(name: &'a PropName) -> &'a Span {
-  match name {
-    PropName::Ident(n) => &n.span,
-    PropName::Str(n) => &n.span,
-    PropName::Num(n) => &n.span,
-    PropName::Computed(n) => &n.span,
-    PropName::BigInt(n) => &n.span,
-  }
-}
-
-fn get_jsx_object_span<'a>(obj: &'a JSXObject) -> &'a Span {
-  match obj {
-    JSXObject::JSXMemberExpr(e) => &e.prop.span,
-    JSXObject::Ident(i) => &i.span,
-  }
-}
-
-fn concat_span(left: &Span, right: &Span) -> Span {
-  Span {
-    lo: left.lo,
-    hi: right.hi,
-    ctxt: left.ctxt.clone(),
-  }
 }
