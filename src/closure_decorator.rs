@@ -212,6 +212,8 @@ impl VisitMut for ClosureDecorator {
           &concat_span(get_prop_name_span(&method.key), &method.function.span),
         );
 
+        method.visit_mut_children_with(self);
+
         // re-write to
         // { method: function method() { }}
         let func = Box::new(Expr::Fn(FnExpr {
@@ -227,10 +229,10 @@ impl VisitMut for ClosureDecorator {
           value: self.register_ast(func, ast),
         });
       }
-      _ => {}
+      _ => {
+        prop.visit_mut_children_with(self);
+      }
     };
-
-    prop.visit_mut_children_with(self);
   }
 
   fn visit_mut_expr(&mut self, expr: &mut Expr) {
