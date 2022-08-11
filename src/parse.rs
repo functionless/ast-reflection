@@ -57,7 +57,7 @@ impl ClosureDecorator {
             .iter()
             .map(|member| {
               self
-                .parse_class_member(member)
+                .parse_class_member(member, if is_root { class_like.name() } else { None })
                 .map(|expr| ExprOrSpread { expr, spread: None })
             })
             .collect(),
@@ -186,13 +186,21 @@ impl ClosureDecorator {
    * }
    * ```
    */
-  pub fn parse_class_method(&mut self, method: &ClassMethod) -> Box<Expr> {
+  pub fn parse_class_method(
+    &mut self,
+    method: &ClassMethod,
+    owned_by: Option<&Ident>,
+  ) -> Box<Expr> {
     self.vm.enter();
 
     self.vm.bind_params(&method.function.params);
 
     let node = new_node(
-      Node::MethodDecl,
+      match method.kind {
+        MethodKind::Method => Node::MethodDecl,
+        MethodKind::Getter => Node::GetAccessorDecl,
+        MethodKind::Setter => Node::SetAccessorDecl,
+      },
       &method.span,
       vec![
         self.parse_prop_name(&method.key),
@@ -200,6 +208,15 @@ impl ClosureDecorator {
         self.parse_block(method.function.body.as_ref().unwrap()),
         bool_expr(method.function.is_async),
         bool_expr(method.function.is_generator),
+        match owned_by {
+          Some(_) => undefined_expr(),
+          // this is the root, so provide the file name
+          None => __filename(),
+        },
+        bool_expr(method.is_static),
+        owned_by
+          .map(|i| self.parse_ident(i, true))
+          .unwrap_or(undefined_expr()),
       ],
     );
 
@@ -208,7 +225,11 @@ impl ClosureDecorator {
     node
   }
 
-  pub fn parse_private_method(&mut self, method: &PrivateMethod) -> Box<Expr> {
+  pub fn parse_private_method(
+    &mut self,
+    method: &PrivateMethod,
+    owned_by: Option<&Ident>,
+  ) -> Box<Expr> {
     self.vm.enter();
 
     self.vm.bind_params(&method.function.params);
@@ -222,6 +243,10 @@ impl ClosureDecorator {
         self.parse_block(method.function.body.as_ref().unwrap()),
         bool_expr(method.function.is_async),
         bool_expr(method.function.is_generator),
+        bool_expr(method.is_static),
+        owned_by
+          .map(|i| self.parse_ident(i, true))
+          .unwrap_or(undefined_expr()),
       ],
     );
 
@@ -1187,7 +1212,11 @@ impl ClosureDecorator {
     node
   }
 
-  fn parse_class_member(&mut self, member: &ClassMember) -> Option<Box<Expr>> {
+  fn parse_class_member(
+    &mut self,
+    member: &ClassMember,
+    owned_by: Option<&Ident>,
+  ) -> Option<Box<Expr>> {
     match member {
       ClassMember::ClassProp(prop) => Some(new_node(
         Node::PropDecl,
@@ -1207,8 +1236,8 @@ impl ClosureDecorator {
       )),
       ClassMember::Constructor(ctor) => Some(self.parse_ctor(ctor)),
       ClassMember::Empty(_) => None,
-      ClassMember::Method(method) => Some(self.parse_class_method(method)),
-      ClassMember::PrivateMethod(method) => Some(self.parse_private_method(method)),
+      ClassMember::Method(method) => Some(self.parse_class_method(method, owned_by)),
+      ClassMember::PrivateMethod(method) => Some(self.parse_private_method(method, owned_by)),
       ClassMember::PrivateProp(prop) => Some(new_node(
         Node::PropDecl,
         &prop.span,

@@ -262,6 +262,8 @@ impl ClosureDecorator {
     // }
     let class_ref = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
 
+    let class_name = class_like.name();
+
     let register_class_stmt = self.register_ast_stmt(class_ref, class_ast);
 
     let register_stmts: Vec<Stmt> = class_like
@@ -269,8 +271,8 @@ impl ClosureDecorator {
       .body
       .iter()
       .filter_map(|member| match member {
-        ClassMember::Method(method) => Some(self.register_class_method(method)),
-        ClassMember::PrivateMethod(_method) => None,
+        ClassMember::Method(method) => Some(self.register_class_method(method, class_name)),
+        // ClassMember::PrivateMethod(method) => Some(self.register_class_method(method, class_name)),
         _ => None,
       })
       .chain(iter::once(register_class_stmt))
@@ -292,8 +294,8 @@ impl ClosureDecorator {
     }
   }
 
-  fn register_class_method(&mut self, method: &ClassMethod) -> Stmt {
-    let method_ast = self.parse_class_method(method);
+  fn register_class_method(&mut self, method: &ClassMethod, owned_by: Option<&Ident>) -> Stmt {
+    let method_ast = self.parse_class_method(method, owned_by);
 
     let this = Box::new(if method.is_static {
       // `this` if it is static
