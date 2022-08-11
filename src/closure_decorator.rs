@@ -7,6 +7,7 @@ use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, quote_ident};
 
 use crate::class_like::ClassLike;
+use crate::js_util::{ref_expr, this_expr};
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
@@ -296,8 +297,6 @@ impl ClosureDecorator {
     // }
     let class_ref = Box::new(Expr::This(ThisExpr { span: DUMMY_SP }));
 
-    let class_name = class_like.name();
-
     let register_class_stmt = self.register_ast_stmt(class_ref, class_ast);
 
     let register_stmts: Vec<Stmt> = class_like
@@ -305,7 +304,7 @@ impl ClosureDecorator {
       .body
       .iter()
       .filter_map(|member| match member {
-        ClassMember::Method(method) => Some(self.register_class_method(method, class_name)),
+        ClassMember::Method(method) => Some(self.register_class_method(method)),
         // ClassMember::PrivateMethod(method) => Some(self.register_class_method(method, class_name)),
         _ => None,
       })
@@ -328,8 +327,8 @@ impl ClosureDecorator {
     }
   }
 
-  fn register_class_method(&mut self, method: &ClassMethod, owned_by: Option<&Ident>) -> Stmt {
-    let method_ast = self.parse_method_like(method, owned_by, &method.span);
+  fn register_class_method(&mut self, method: &ClassMethod) -> Stmt {
+    let method_ast = self.parse_method_like(method, Some(ref_expr(this_expr())), &method.span);
 
     let this = Box::new(if method.is_static {
       // `this` if it is static

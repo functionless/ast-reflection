@@ -1,6 +1,10 @@
 use swc_common::DUMMY_SP;
 use swc_plugin::ast::*;
 
+use crate::ast::*;
+use crate::parse::new_node;
+use crate::span::get_expr_span;
+
 pub fn str(str: &str) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Str(Str {
     raw: None,
@@ -9,12 +13,47 @@ pub fn str(str: &str) -> Box<Expr> {
   })))
 }
 
-pub fn num(i: u32) -> Box<Expr> {
+pub fn number_u32(i: u32) -> Box<Expr> {
+  number_f64(i as f64)
+}
+
+pub fn number_i32(i: i32) -> Box<Expr> {
+  number_f64(i as f64)
+}
+
+pub fn number_f64(i: f64) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Num(Number {
     raw: None,
     span: DUMMY_SP,
-    value: i as u32 as f64,
+    value: i,
   })))
+}
+
+pub fn ref_expr(expr: Box<Expr>) -> Box<Expr> {
+  let body = expr.as_ref().clone();
+  let span = get_expr_span(&body);
+  let pointer = arrow_pointer(expr);
+  new_node(
+    Node::ReferenceExpr,
+    span,
+    vec![str(""), pointer, number_i32(-1)],
+  )
+}
+
+pub fn arrow_pointer(expr: Box<Expr>) -> Box<Expr> {
+  Box::new(Expr::Arrow(ArrowExpr {
+    span: get_expr_span(expr.as_ref()).clone(),
+    body: BlockStmtOrExpr::Expr(expr),
+    is_async: false,
+    is_generator: false,
+    params: vec![],
+    return_type: None,
+    type_params: None,
+  }))
+}
+
+pub fn this_expr() -> Box<Expr> {
+  Box::new(Expr::This(ThisExpr { span: DUMMY_SP }))
 }
 
 pub fn bool_expr(value: bool) -> Box<Expr> {
