@@ -124,21 +124,40 @@ impl ClosureDecorator {
   }
 
   pub fn parse_function_decl(&mut self, function: &FnDecl, is_root: bool) -> Box<Expr> {
-    self.parse_function(
+    self.vm.enter();
+
+    self.vm.bind_ident(&function.ident);
+
+    let node = self.parse_function(
       Node::FunctionDecl,
       Some(&function.ident),
       &function.function,
       is_root,
-    )
+    );
+
+    self.vm.exit();
+
+    node
   }
 
   pub fn parse_function_expr(&mut self, function: &FnExpr, is_root: bool) -> Box<Expr> {
-    self.parse_function(
+    self.vm.enter();
+
+    function
+      .ident
+      .iter()
+      .for_each(|ident| self.vm.bind_ident(ident));
+
+    let node = self.parse_function(
       Node::FunctionExpr,
       function.ident.as_ref(),
       &function.function,
       is_root,
-    )
+    );
+
+    self.vm.exit();
+
+    node
   }
 
   fn parse_function(
@@ -1459,12 +1478,15 @@ impl ClosureDecorator {
             .map(|elem| {
               Some(ExprOrSpread {
                 expr: match elem {
-                  Some(pat @ Pat::Ident(i)) => new_node(
-                    Node::BindingElem,
-                    &i.span,
-                    vec![self.parse_pat(&pat), false_expr()],
-                  ),
-                  Some(pat) => self.parse_pat(pat),
+                  Some(pat) => match pat {
+                    Pat::Assign(_) => self.parse_pat(pat),
+                    Pat::Rest(_) => self.parse_pat(pat),
+                    _ => new_node(
+                      Node::BindingElem,
+                      get_pat_span(pat),
+                      vec![self.parse_pat(pat), false_expr()],
+                    ),
+                  },
                   None => new_node(Node::OmittedExpr, &empty_span(), vec![]),
                 },
                 spread: None,
