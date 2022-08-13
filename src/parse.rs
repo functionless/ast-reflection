@@ -1442,6 +1442,11 @@ impl ClosureDecorator {
   fn parse_ident(&mut self, ident: &Ident, is_ref: bool) -> Box<Expr> {
     if is_ref && &ident.sym == "undefined" {
       new_node(Node::UndefinedLiteralExpr, &ident.span, vec![])
+    } else if is_ref && &ident.sym == "arguments" && !self.vm.is_id_visible(ident) {
+      // this is the arguments keyword
+      // TODO: check our assumptions, it is only true when inside a function and when
+      // no other name has been bound to to that name
+      new_node(Node::Identifier, &ident.span, vec![string_expr(&ident.sym)])
     } else if is_ref && !self.vm.is_id_visible(ident) {
       // if this is a free variable, then create a new ReferenceExpr(() => ident)
       new_node(
@@ -1457,12 +1462,9 @@ impl ClosureDecorator {
             span: DUMMY_SP,
             type_params: None,
             body: BlockStmtOrExpr::Expr(Box::new(Expr::Cond(CondExpr {
-              test: not_eq_eq(
-                type_of(ident_expr(ident.clone())),
-                ident_expr(quote_ident!("undefined")),
-              ),
+              test: not_eq_eq(type_of(ident_expr(ident.clone())), string_expr("undefined")),
               cons: ident_expr(ident.clone()),
-              alt: string_expr("undefined"),
+              alt: ident_expr(quote_ident!("undefined")),
               span: DUMMY_SP,
             }))),
           })),
