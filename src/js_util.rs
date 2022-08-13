@@ -5,7 +5,11 @@ use crate::ast::*;
 use crate::parse::new_node;
 use crate::span::get_expr_span;
 
-pub fn str(str: &str) -> Box<Expr> {
+pub fn ident_expr(ident: Ident) -> Box<Expr> {
+  Box::new(Expr::Ident(ident))
+}
+
+pub fn string_expr(str: &str) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Str(Str {
     raw: None,
     span: DUMMY_SP,
@@ -29,10 +33,6 @@ pub fn number_f64(i: f64) -> Box<Expr> {
   })))
 }
 
-pub fn ident_expr(ident: Ident) -> Box<Expr> {
-  Box::new(Expr::Ident(ident))
-}
-
 pub fn prop_access_expr(expr: Box<Expr>, prop: Ident) -> Box<Expr> {
   Box::new(Expr::Member(MemberExpr {
     obj: expr,
@@ -48,7 +48,7 @@ pub fn ref_expr(expr: Box<Expr>) -> Box<Expr> {
   new_node(
     Node::ReferenceExpr,
     span,
-    vec![str(""), pointer, number_i32(-1)],
+    vec![string_expr(""), pointer, number_i32(-1)],
   )
 }
 

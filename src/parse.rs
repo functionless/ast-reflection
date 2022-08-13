@@ -182,7 +182,7 @@ impl ClosureDecorator {
       &function.span,
       vec![
         name
-          .map(|ident| str(&ident.to_id().0))
+          .map(|ident| string_expr(&ident.to_id().0))
           .unwrap_or(undefined_expr()),
         params,
         body,
@@ -795,7 +795,7 @@ impl ClosureDecorator {
             PatOrExpr::Expr(expr) => self.parse_expr(expr),
             PatOrExpr::Pat(pat) => self.parse_pat(pat),
           },
-          str(match assign.op {
+          string_expr(match assign.op {
             AssignOp::Assign => "=",
             AssignOp::AddAssign => "+=",
             AssignOp::SubAssign => "-=",
@@ -826,7 +826,7 @@ impl ClosureDecorator {
         &binary_op.span,
         vec![
           self.parse_expr(binary_op.left.as_ref()),
-          str(match binary_op.op {
+          string_expr(match binary_op.op {
             BinaryOp::Add => "+",
             BinaryOp::BitAnd => "&",
             BinaryOp::BitOr => "|",
@@ -1022,7 +1022,7 @@ impl ClosureDecorator {
             vec![
               //
               left,
-              str(","),
+              string_expr(","),
               self.parse_expr(right),
             ],
           )
@@ -1079,7 +1079,7 @@ impl ClosureDecorator {
           &unary.span,
           vec![
             // op
-            str(match unary.op {
+            string_expr(match unary.op {
               UnaryOp::Minus => "-",
               UnaryOp::Plus => "+",
               UnaryOp::Bang => "!",
@@ -1102,7 +1102,7 @@ impl ClosureDecorator {
         &update.span,
         vec![
           // op
-          str(match update.op {
+          string_expr(match update.op {
             UpdateOp::PlusPlus => "++",
             UpdateOp::MinusMinus => "--",
           }),
@@ -1340,7 +1340,7 @@ impl ClosureDecorator {
     new_node(
       Node::PrivateIdentifier,
       &name.span,
-      vec![str(&format!("#{}", name.id.sym))],
+      vec![string_expr(&format!("#{}", name.id.sym))],
     )
   }
 
@@ -1391,7 +1391,7 @@ impl ClosureDecorator {
       new_node(
         Node::NoSubstitutionTemplateLiteral,
         &tpl.span,
-        vec![str(&tpl.quasis.first().unwrap().raw)],
+        vec![string_expr(&tpl.quasis.first().unwrap().raw)],
       )
     } else {
       new_node(
@@ -1400,7 +1400,7 @@ impl ClosureDecorator {
         vec![
           {
             let head = tpl.quasis.first().unwrap();
-            new_node(Node::TemplateHead, &head.span, vec![str(&head.raw)])
+            new_node(Node::TemplateHead, &head.span, vec![string_expr(&head.raw)])
           },
           Box::new(Expr::Array(ArrayLit {
             span: DUMMY_SP,
@@ -1424,7 +1424,7 @@ impl ClosureDecorator {
                           Node::TemplateMiddle
                         },
                         &literal.span,
-                        vec![str(&literal.raw)],
+                        vec![string_expr(&literal.raw)],
                       ),
                     ],
                   ),
@@ -1447,7 +1447,7 @@ impl ClosureDecorator {
         Node::ReferenceExpr,
         &ident.span,
         vec![
-          str(&ident.sym),
+          string_expr(&ident.sym),
           Box::new(Expr::Arrow(ArrowExpr {
             is_async: false,
             is_generator: false,
@@ -1461,7 +1461,7 @@ impl ClosureDecorator {
         ],
       )
     } else {
-      new_node(Node::Identifier, &ident.span, vec![str(&ident.sym)])
+      new_node(Node::Identifier, &ident.span, vec![string_expr(&ident.sym)])
     }
   }
 
@@ -1632,5 +1632,5 @@ pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
 }
 
 fn new_error_node(message: &str, span: &Span) -> Box<Expr> {
-  new_node(Node::Err, span, vec![str(message)])
+  new_node(Node::Err, span, vec![string_expr(message)])
 }

@@ -1,13 +1,12 @@
 use std::iter;
 
 use swc_common::{util::take::Take, DUMMY_SP};
-use swc_common::{BytePos, Span, SyntaxContext};
 use swc_ecma_visit::VisitMut;
 use swc_plugin::ast::*;
-use swc_plugin::utils::{prepend_stmts, quote_ident};
+use swc_plugin::utils::{prepend_stmts, private_ident, quote_ident};
 
 use crate::class_like::ClassLike;
-use crate::js_util::{ident_expr, prop_access_expr, ref_expr, this_expr};
+use crate::js_util::{ident_expr, prop_access_expr, ref_expr, string_expr, this_expr};
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
@@ -26,6 +25,18 @@ use crate::virtual_machine::VirtualMachine;
  * the `register` function which attaches its AST as a property.
  */
 const REGISTER_FUNCTION_NAME: &str = "register_8269d1a8";
+
+/**
+ * This name doesn't really matter as we use a private_ident!() to identify the
+ * variable pointing to the global symbols. We name it this for three reasons:
+ * 1. consistency with register_ and bind_
+ * 2. avoid conflict in 99.9% of cases without forcing re-name of source identifiers
+ *    -> if we named it "Symbol", for example, we would force rename of any source Symbol
+ *       identifiers to Symbol1. This would be safe but in the spirit of minimizing mutation
+ *       of source, we'll append the salt, "8269d1a8".
+ * 3. easily identify all of Functionless's injected code via the salt, "8269d1a8".
+ */
+const SYMBOL_VAR_NAME: &str = "Symbol_8269d1a8";
 
 /**
  * Name of the `bind` function that is injected into all compiled source files.
@@ -63,47 +74,36 @@ pub struct ClosureDecorator {
    */
   pub vm: VirtualMachine,
   /**
+   * A private identifier to Symbol.
+   */
+  pub symbol: Ident,
+  /**
    * An Identifier referencing the `register` interceptor function injected into all processed modules.
    */
-  pub register: Box<Expr>,
+  pub register: Ident,
   /**
    * An Identifier referencing the `bind` interceptor function injected into all processed modules.
    */
-  pub bind: Box<Expr>,
+  pub bind: Ident,
 }
 
 impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
       vm: VirtualMachine::new(),
-      register: ident_expr(module_ident(REGISTER_FUNCTION_NAME)),
-      bind: ident_expr(module_ident(BIND_FUNCTION_NAME)),
+      symbol: private_ident!(SYMBOL_VAR_NAME),
+      register: private_ident!(REGISTER_FUNCTION_NAME),
+      bind: private_ident!(BIND_FUNCTION_NAME),
     }
-  }
-}
-
-/**
- * Creates an [Identifier](Ident) that points to a value declared in the top-level of a module.
- *
- * This means it has [SyntaxContext](SyntaxContext) of `0`.
- */
-fn module_ident(name: &str) -> Ident {
-  Ident {
-    span: Span {
-      ctxt: SyntaxContext::from_u32(0),
-      hi: BytePos(0),
-      lo: BytePos(0),
-    },
-    sym: JsWord::from(name),
-    optional: false,
   }
 }
 
 impl VisitMut for ClosureDecorator {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     let new_stmts: Vec<ModuleItem> = [
-      ModuleItem::Stmt(Stmt::Decl(create_register_function())),
-      ModuleItem::Stmt(Stmt::Decl(create_bind_function())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_symbol_var())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_register_function())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_bind_function())),
     ]
     .into_iter()
     .chain(
@@ -193,7 +193,7 @@ impl VisitMut for ClosureDecorator {
       // =>
       // bind(foo, bar);
       *call = CallExpr {
-        callee: Callee::Expr(self.bind.clone()),
+        callee: Callee::Expr(Box::new(Expr::Ident(self.bind.clone()))),
         span: call.span.clone(),
         type_args: None,
         args,
@@ -456,7 +456,7 @@ impl ClosureDecorator {
       span: DUMMY_SP,
       type_args: None,
       // register(() =>  { .. }, () => new FunctionDecl([..]))
-      callee: Callee::Expr(self.register.clone()),
+      callee: Callee::Expr(Box::new(Expr::Ident(self.register.clone()))),
       args: vec![
         ExprOrSpread {
           expr: func,
@@ -477,149 +477,218 @@ impl ClosureDecorator {
       ],
     }))
   }
-}
 
-// function register(func, ast) {
-//   func[Symbol.for("functionless:ast")] = ast;
-//   return func;
-// }
-fn create_register_function() -> Decl {
-  let func = quote_ident!("func");
-  let ast = quote_ident!("ast");
-  Decl::Fn(FnDecl {
-    declare: false,
-    ident: Ident {
+  /**
+   * Declare a private variable pointing to the global Symbol primitive
+   * const Symbol = register_8269d1a8.constructor("return this")().Symbol;
+   */
+  fn create_symbol_var(&self) -> Decl {
+    Decl::Var(VarDecl {
+      declare: false,
+      kind: VarDeclKind::Const,
       span: DUMMY_SP,
-      sym: JsWord::from(REGISTER_FUNCTION_NAME),
-      optional: false,
-    },
-    function: Function {
-      params: vec![param(func.clone(), false), param(ast.clone(), false)],
-      decorators: vec![],
-      span: DUMMY_SP,
-      body: Some(BlockStmt {
+      decls: vec![VarDeclarator {
         span: DUMMY_SP,
-        stmts: vec![
-          set_symbol(func.clone(), "functionless:AST", ast.clone()),
-          Stmt::Return(ReturnStmt {
+        definite: false,
+        name: Pat::Ident(BindingIdent {
+          id: self.symbol.clone(),
+          type_ann: None,
+        }),
+        init: Some(Box::new(Expr::Member(MemberExpr {
+          span: DUMMY_SP,
+          obj: Box::new(Expr::Call(CallExpr {
             span: DUMMY_SP,
-            arg: Some(Box::new(Expr::Ident(func.clone()))),
-          }),
-        ],
-      }),
-      is_generator: false,
-      is_async: false,
-      type_params: None,
-      return_type: None,
-    },
-  })
-}
-
-// function bind(func, self, ...args) {
-//   const f = func.bind(self, ...args);
-//   f[Symbol.for("functionless:BoundThis")] = self;
-//   f[Symbol.for("functionless:BoundArgs")] = args;
-//   f[Symbol.for("functionless:TargetFunction")] = func;
-//   return func.bind(self, ...args);
-//}
-fn create_bind_function() -> Decl {
-  let func = quote_ident!("func");
-  let this = quote_ident!("self");
-  let args = quote_ident!("args");
-  let f = quote_ident!("f");
-  Decl::Fn(FnDecl {
-    declare: false,
-    ident: Ident {
-      span: DUMMY_SP,
-      sym: JsWord::from(BIND_FUNCTION_NAME),
-      optional: false,
-    },
-    function: Function {
-      params: vec![
-        param(func.clone(), false),
-        param(this.clone(), false),
-        param(args.clone(), true),
-      ],
-      decorators: vec![],
-      span: DUMMY_SP,
-      body: Some(BlockStmt {
-        span: DUMMY_SP,
-        stmts: vec![
-          // const f = func.bind(self, ...args);
-          Stmt::Decl(Decl::Var(VarDecl {
-            declare: false,
-            kind: VarDeclKind::Const,
-            decls: vec![VarDeclarator {
-              definite: false,
+            type_args: None,
+            callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
               span: DUMMY_SP,
-              name: Pat::Ident(BindingIdent {
-                id: f.clone(),
-                type_ann: None,
-              }),
-              init: Some(Box::new(Expr::Call(CallExpr {
-                span: DUMMY_SP,
-                type_args: None,
-                callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
-                  obj: Box::new(Expr::Ident(func.clone())),
-                  prop: MemberProp::Ident(quote_ident!("bind")),
-                  span: DUMMY_SP,
-                }))),
-                args: vec![
-                  ExprOrSpread {
-                    expr: Box::new(Expr::Ident(this.clone())),
-                    spread: None,
-                  },
-                  ExprOrSpread {
-                    expr: Box::new(Expr::Ident(args.clone())),
-                    spread: Some(DUMMY_SP),
-                  },
-                ],
-              }))),
-            }],
-            span: DUMMY_SP,
+              type_args: None,
+              callee: Callee::Expr(prop_access_expr(
+                ident_expr(self.register.clone()),
+                quote_ident!("constructor"),
+              )),
+              args: vec![ExprOrSpread {
+                spread: None,
+                expr: string_expr("return this;"),
+              }],
+            }))),
+            args: vec![],
           })),
-          // if(typeof func === "function")
-          Stmt::If(IfStmt {
-            span: DUMMY_SP,
-            test: Box::new(Expr::Bin(BinExpr {
+          prop: MemberProp::Ident(quote_ident!("Symbol")),
+        }))),
+      }],
+    })
+  }
+
+  // function register(func, ast) {
+  //   func[Symbol.for("functionless:ast")] = ast;
+  //   return func;
+  // }
+  fn create_register_function(&self) -> Decl {
+    let func = quote_ident!("func");
+    let ast = quote_ident!("ast");
+    Decl::Fn(FnDecl {
+      declare: false,
+      ident: self.register.clone(),
+      function: Function {
+        params: vec![param(func.clone(), false), param(ast.clone(), false)],
+        decorators: vec![],
+        span: DUMMY_SP,
+        body: Some(BlockStmt {
+          span: DUMMY_SP,
+          stmts: vec![
+            self.set_symbol(func.clone(), "functionless:AST", ast.clone()),
+            Stmt::Return(ReturnStmt {
               span: DUMMY_SP,
-              left: Box::new(Expr::Unary(UnaryExpr {
-                arg: Box::new(Expr::Ident(func.clone())),
-                span: DUMMY_SP,
-                op: UnaryOp::TypeOf,
-              })),
-              op: BinaryOp::EqEqEq,
-              right: Box::new(Expr::Lit(Lit::Str(Str {
-                raw: None,
-                span: DUMMY_SP,
-                value: JsWord::from("function"),
-              }))),
-            })),
-            alt: None,
-            cons: Box::new(Stmt::Block(BlockStmt {
-              span: DUMMY_SP,
-              stmts: vec![
-                // f[Symbol.for("functionless:BoundThis")] = self;
-                // f[Symbol.for("functionless:BoundArgs")] = args;
-                // f[Symbol.for("functionless:TargetFunction")] = func;
-                set_symbol(f.clone(), "functionless:BoundThis", this.clone()),
-                set_symbol(f.clone(), "functionless:BoundArgs", args.clone()),
-                set_symbol(f.clone(), "functionless:TargetFunction", func.clone()),
-              ],
-            })),
-          }),
-          Stmt::Return(ReturnStmt {
-            span: DUMMY_SP,
-            arg: Some(Box::new(Expr::Ident(f.clone()))),
-          }),
+              arg: Some(Box::new(Expr::Ident(func.clone()))),
+            }),
+          ],
+        }),
+        is_generator: false,
+        is_async: false,
+        type_params: None,
+        return_type: None,
+      },
+    })
+  }
+
+  // function bind(func, self, ...args) {
+  //   const f = func.bind(self, ...args);
+  //   f[Symbol.for("functionless:BoundThis")] = self;
+  //   f[Symbol.for("functionless:BoundArgs")] = args;
+  //   f[Symbol.for("functionless:TargetFunction")] = func;
+  //   return func.bind(self, ...args);
+  //}
+  fn create_bind_function(&self) -> Decl {
+    let func = quote_ident!("func");
+    let this = quote_ident!("self");
+    let args = quote_ident!("args");
+    let f = quote_ident!("f");
+    Decl::Fn(FnDecl {
+      declare: false,
+      ident: self.bind.clone(),
+      function: Function {
+        params: vec![
+          param(func.clone(), false),
+          param(this.clone(), false),
+          param(args.clone(), true),
         ],
-      }),
-      is_generator: false,
-      is_async: false,
-      type_params: None,
-      return_type: None,
-    },
-  })
+        decorators: vec![],
+        span: DUMMY_SP,
+        body: Some(BlockStmt {
+          span: DUMMY_SP,
+          stmts: vec![
+            // const f = func.bind(self, ...args);
+            Stmt::Decl(Decl::Var(VarDecl {
+              declare: false,
+              kind: VarDeclKind::Const,
+              decls: vec![VarDeclarator {
+                definite: false,
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                  id: f.clone(),
+                  type_ann: None,
+                }),
+                init: Some(Box::new(Expr::Call(CallExpr {
+                  span: DUMMY_SP,
+                  type_args: None,
+                  callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                    obj: Box::new(Expr::Ident(func.clone())),
+                    prop: MemberProp::Ident(quote_ident!("bind")),
+                    span: DUMMY_SP,
+                  }))),
+                  args: vec![
+                    ExprOrSpread {
+                      expr: Box::new(Expr::Ident(this.clone())),
+                      spread: None,
+                    },
+                    ExprOrSpread {
+                      expr: Box::new(Expr::Ident(args.clone())),
+                      spread: Some(DUMMY_SP),
+                    },
+                  ],
+                }))),
+              }],
+              span: DUMMY_SP,
+            })),
+            // if(typeof func === "function")
+            Stmt::If(IfStmt {
+              span: DUMMY_SP,
+              test: Box::new(Expr::Bin(BinExpr {
+                span: DUMMY_SP,
+                left: Box::new(Expr::Unary(UnaryExpr {
+                  arg: Box::new(Expr::Ident(func.clone())),
+                  span: DUMMY_SP,
+                  op: UnaryOp::TypeOf,
+                })),
+                op: BinaryOp::EqEqEq,
+                right: Box::new(Expr::Lit(Lit::Str(Str {
+                  raw: None,
+                  span: DUMMY_SP,
+                  value: JsWord::from("function"),
+                }))),
+              })),
+              alt: None,
+              cons: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                stmts: vec![
+                  // f[Symbol.for("functionless:BoundThis")] = self;
+                  // f[Symbol.for("functionless:BoundArgs")] = args;
+                  // f[Symbol.for("functionless:TargetFunction")] = func;
+                  self.set_symbol(f.clone(), "functionless:BoundThis", this.clone()),
+                  self.set_symbol(f.clone(), "functionless:BoundArgs", args.clone()),
+                  self.set_symbol(f.clone(), "functionless:TargetFunction", func.clone()),
+                ],
+              })),
+            }),
+            Stmt::Return(ReturnStmt {
+              span: DUMMY_SP,
+              arg: Some(Box::new(Expr::Ident(f.clone()))),
+            }),
+          ],
+        }),
+        is_generator: false,
+        is_async: false,
+        type_params: None,
+        return_type: None,
+      },
+    })
+  }
+
+  fn set_symbol(&self, on: Ident, sym: &str, to: Ident) -> Stmt {
+    Stmt::Expr(ExprStmt {
+      span: DUMMY_SP,
+      expr: Box::new(Expr::Assign(AssignExpr {
+        // func[Symbol.for("functionless:AST")] = ast
+        left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+          obj: Box::new(Expr::Ident(on.clone())),
+          span: DUMMY_SP,
+          prop: MemberProp::Computed(ComputedPropName {
+            span: DUMMY_SP,
+            // Symbol.for("functionless:AST")
+            expr: Box::new(Expr::Call(CallExpr {
+              callee: Callee::Expr(prop_access_expr(
+                ident_expr(self.symbol.clone()),
+                quote_ident!("for"),
+              )),
+              args: vec![ExprOrSpread {
+                expr: Box::new(Expr::Lit(Lit::Str(Str {
+                  raw: None,
+                  span: DUMMY_SP,
+                  value: JsWord::from(sym),
+                }))),
+                spread: None,
+              }],
+              span: DUMMY_SP,
+              type_args: None,
+            })),
+          }),
+        }))),
+        op: AssignOp::Assign,
+        right: Box::new(Expr::Ident(to.clone())),
+        span: DUMMY_SP,
+      })),
+    })
+  }
 }
 
 fn param(id: Ident, rest: bool) -> Param {
@@ -637,43 +706,4 @@ fn param(id: Ident, rest: bool) -> Param {
       Pat::Ident(BindingIdent { id, type_ann: None })
     },
   }
-}
-
-fn set_symbol(on: Ident, sym: &str, to: Ident) -> Stmt {
-  Stmt::Expr(ExprStmt {
-    span: DUMMY_SP,
-    expr: Box::new(Expr::Assign(AssignExpr {
-      // func[Symbol.for("functionless:AST")] = ast
-      left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
-        obj: Box::new(Expr::Ident(on.clone())),
-        span: DUMMY_SP,
-        prop: MemberProp::Computed(ComputedPropName {
-          span: DUMMY_SP,
-          // Symbol.for("functionless:AST")
-          expr: Box::new(Expr::Call(CallExpr {
-            callee: Callee::Expr(prop_access_expr(
-              prop_access_expr(
-                Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
-                quote_ident!("Symbol"),
-              ),
-              quote_ident!("for"),
-            )),
-            args: vec![ExprOrSpread {
-              expr: Box::new(Expr::Lit(Lit::Str(Str {
-                raw: None,
-                span: DUMMY_SP,
-                value: JsWord::from(sym),
-              }))),
-              spread: None,
-            }],
-            span: DUMMY_SP,
-            type_args: None,
-          })),
-        }),
-      }))),
-      op: AssignOp::Assign,
-      right: Box::new(Expr::Ident(to.clone())),
-      span: DUMMY_SP,
-    })),
-  })
 }
