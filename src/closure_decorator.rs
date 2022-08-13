@@ -7,7 +7,7 @@ use swc_plugin::ast::*;
 use swc_plugin::utils::{prepend_stmts, quote_ident};
 
 use crate::class_like::ClassLike;
-use crate::js_util::{ref_expr, this_expr};
+use crate::js_util::{ident_expr, prop_access_expr, ref_expr, this_expr};
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
@@ -65,19 +65,19 @@ pub struct ClosureDecorator {
   /**
    * An Identifier referencing the `register` interceptor function injected into all processed modules.
    */
-  pub register: Ident,
+  pub register: Box<Expr>,
   /**
    * An Identifier referencing the `bind` interceptor function injected into all processed modules.
    */
-  pub bind: Ident,
+  pub bind: Box<Expr>,
 }
 
 impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
       vm: VirtualMachine::new(),
-      register: module_ident(REGISTER_FUNCTION_NAME),
-      bind: module_ident(BIND_FUNCTION_NAME),
+      register: ident_expr(module_ident(REGISTER_FUNCTION_NAME)),
+      bind: ident_expr(module_ident(BIND_FUNCTION_NAME)),
     }
   }
 }
@@ -193,7 +193,7 @@ impl VisitMut for ClosureDecorator {
       // =>
       // bind(foo, bar);
       *call = CallExpr {
-        callee: Callee::Expr(Box::new(Expr::Ident(self.bind.clone()))),
+        callee: Callee::Expr(self.bind.clone()),
         span: call.span.clone(),
         type_args: None,
         args,
@@ -456,7 +456,7 @@ impl ClosureDecorator {
       span: DUMMY_SP,
       type_args: None,
       // register(() =>  { .. }, () => new FunctionDecl([..]))
-      callee: Callee::Expr(Box::new(Expr::Ident(self.register.clone()))),
+      callee: Callee::Expr(self.register.clone()),
       args: vec![
         ExprOrSpread {
           expr: func,
@@ -651,11 +651,13 @@ fn set_symbol(on: Ident, sym: &str, to: Ident) -> Stmt {
           span: DUMMY_SP,
           // Symbol.for("functionless:AST")
           expr: Box::new(Expr::Call(CallExpr {
-            callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
-              obj: Box::new(Expr::Ident(quote_ident!("Symbol"))),
-              prop: MemberProp::Ident(quote_ident!("for")),
-              span: DUMMY_SP,
-            }))),
+            callee: Callee::Expr(prop_access_expr(
+              prop_access_expr(
+                Box::new(Expr::This(ThisExpr { span: DUMMY_SP })),
+                quote_ident!("Symbol"),
+              ),
+              quote_ident!("for"),
+            )),
             args: vec![ExprOrSpread {
               expr: Box::new(Expr::Lit(Lit::Str(Str {
                 raw: None,

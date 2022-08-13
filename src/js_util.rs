@@ -29,6 +29,18 @@ pub fn number_f64(i: f64) -> Box<Expr> {
   })))
 }
 
+pub fn ident_expr(ident: Ident) -> Box<Expr> {
+  Box::new(Expr::Ident(ident))
+}
+
+pub fn prop_access_expr(expr: Box<Expr>, prop: Ident) -> Box<Expr> {
+  Box::new(Expr::Member(MemberExpr {
+    obj: expr,
+    prop: MemberProp::Ident(prop),
+    span: DUMMY_SP,
+  }))
+}
+
 pub fn ref_expr(expr: Box<Expr>) -> Box<Expr> {
   let body = expr.as_ref().clone();
   let span = get_expr_span(&body);
