@@ -4,8 +4,13 @@ use swc_ecma_visit::{Fold, VisitMut};
 use swc_plugin::{ast::*, plugin_transform, TransformPluginProgramMetadata};
 
 mod ast;
+mod class_like;
 mod closure_decorator;
+mod js_util;
+mod method_like;
 mod parse;
+mod prepend;
+mod span;
 mod virtual_machine;
 
 #[plugin_transform]
