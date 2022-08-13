@@ -1438,7 +1438,7 @@ impl ClosureDecorator {
     }
   }
 
-  fn parse_ident(&self, ident: &Ident, is_ref: bool) -> Box<Expr> {
+  fn parse_ident(&mut self, ident: &Ident, is_ref: bool) -> Box<Expr> {
     if is_ref && &ident.sym == "undefined" {
       new_node(Node::UndefinedLiteralExpr, &ident.span, vec![])
     } else if is_ref && !self.vm.is_id_visible(ident) {
@@ -1458,6 +1458,7 @@ impl ClosureDecorator {
             body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(ident.clone()))),
           })),
           number_i32(ident.to_id().1.as_u32() as i32),
+          number_u32(self.next_id()),
         ],
       )
     } else {
