@@ -17,6 +17,23 @@ pub fn string_expr(str: &str) -> Box<Expr> {
   })))
 }
 
+pub fn type_of(expr: Box<Expr>) -> Box<Expr> {
+  Box::new(Expr::Unary(UnaryExpr {
+    op: UnaryOp::TypeOf,
+    arg: expr,
+    span: DUMMY_SP,
+  }))
+}
+
+pub fn not_eq_eq(left: Box<Expr>, right: Box<Expr>) -> Box<Expr> {
+  Box::new(Expr::Bin(BinExpr {
+    left,
+    op: BinaryOp::NotEqEq,
+    right,
+    span: DUMMY_SP,
+  }))
+}
+
 pub fn number_u32(i: u32) -> Box<Expr> {
   number_f64(i as f64)
 }

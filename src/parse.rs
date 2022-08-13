@@ -3,6 +3,7 @@ use core::panic;
 use swc_common::source_map::Pos;
 use swc_common::{BytePos, Span, Spanned, SyntaxContext, DUMMY_SP};
 use swc_plugin::ast::*;
+use swc_plugin::utils::quote_ident;
 
 use crate::ast::Node;
 use crate::class_like::ClassLike;
@@ -1455,7 +1456,15 @@ impl ClosureDecorator {
             return_type: None,
             span: DUMMY_SP,
             type_params: None,
-            body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(ident.clone()))),
+            body: BlockStmtOrExpr::Expr(Box::new(Expr::Cond(CondExpr {
+              test: not_eq_eq(
+                type_of(ident_expr(ident.clone())),
+                ident_expr(quote_ident!("undefined")),
+              ),
+              cons: ident_expr(ident.clone()),
+              alt: string_expr("undefined"),
+              span: DUMMY_SP,
+            }))),
           })),
           number_i32(ident.to_id().1.as_u32() as i32),
           number_u32(self.next_id()),
