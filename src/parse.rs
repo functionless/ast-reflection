@@ -1,7 +1,7 @@
 use core::panic;
 
 use swc_common::source_map::Pos;
-use swc_common::{BytePos, Span, Spanned, SyntaxContext, DUMMY_SP};
+use swc_common::{Span, Spanned, DUMMY_SP};
 use swc_plugin::ast::*;
 use swc_plugin::utils::quote_ident;
 
@@ -13,22 +13,6 @@ use crate::method_like::MethodLike;
 use crate::span::*;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
-
-pub fn empty_span() -> Span {
-  Span {
-    ctxt: SyntaxContext::from_u32(0),
-    hi: BytePos::from_u32(0),
-    lo: BytePos::from_u32(0),
-  }
-}
-
-pub fn __filename() -> Box<Expr> {
-  Box::new(Expr::Ident(Ident {
-    optional: false,
-    span: empty_span(),
-    sym: JsWord::from("__filename"),
-  }))
-}
 
 impl ClosureDecorator {
   /**
@@ -1012,9 +996,6 @@ impl ClosureDecorator {
       ),
       Expr::PrivateName(private_name) => self.parse_private_name(private_name),
       Expr::Seq(seq) => {
-        if seq.exprs.len() < 2 {
-          panic!("SequenceExpression with less than 2 expressions");
-        }
         let first = self.parse_expr(seq.exprs.first().unwrap());
         seq.exprs.iter().skip(1).fold(first, |left, right| {
           new_node(
@@ -1053,7 +1034,11 @@ impl ClosureDecorator {
           self.parse_template(&tagged_template.tpl),
         ],
       ),
-      Expr::This(this) => new_node(Node::ThisExpr, &this.span, vec![Box::new(expr.clone())]),
+      Expr::This(this) => new_node(
+        Node::ThisExpr,
+        &this.span,
+        vec![arrow_pointer(Box::new(expr.clone()))],
+      ),
       // erase <expr> as <type> - take <expr> only
       Expr::TsAs(ts_as) => self.parse_expr(&ts_as.expr),
       // erase <expr> as const - take <expr>
@@ -1590,14 +1575,10 @@ impl ClosureDecorator {
 }
 
 pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
-  let mut elems: Vec<Option<ExprOrSpread>> = vec![
+  let elems: Vec<Option<ExprOrSpread>> = [
     // kind
     Some(ExprOrSpread {
-      expr: Box::new(Expr::Lit(Lit::Num(Number {
-        raw: None,
-        span: DUMMY_SP,
-        value: kind as i32 as f64,
-      }))),
+      expr: number_i32(kind as i32),
       spread: None,
     }),
     // span
@@ -1608,38 +1589,30 @@ pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
         elems: vec![
           // start
           Some(ExprOrSpread {
-            expr: Box::new(Expr::Lit(Lit::Num(Number {
-              span: DUMMY_SP,
-              value: span.lo.to_u32() as f64,
-              raw: None,
-            }))),
+            expr: number_u32(span.lo.to_u32()),
             spread: None,
           }),
           // end
           Some(ExprOrSpread {
-            expr: Box::new(Expr::Lit(Lit::Num(Number {
-              span: DUMMY_SP,
-              value: span.hi.to_u32() as f64,
-              raw: None,
-            }))),
+            expr: number_u32(span.hi.to_u32()),
             spread: None,
           }),
         ],
       })),
     }),
-  ];
-
-  // args
-  args.iter().for_each(|arg| {
-    elems.push(Some(ExprOrSpread {
-      expr: arg.to_owned(),
+  ]
+  .into_iter()
+  .chain(args.into_iter().map(|arg| {
+    Some(ExprOrSpread {
+      expr: arg,
       spread: None,
-    }))
-  });
+    })
+  }))
+  .collect();
 
   Box::new(Expr::Array(ArrayLit {
     span: DUMMY_SP,
-    elems: elems,
+    elems,
   }))
 }
 
