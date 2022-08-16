@@ -20,4 +20,4 @@ cd functionless
 yarn
 yarn link @functionless/ast-reflection
 yarn compile
-yarn test:fast
+yarn test

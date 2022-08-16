@@ -1,14 +1,17 @@
-use swc_common::DUMMY_SP;
+use swc_common::source_map::Pos;
+use swc_common::{BytePos, Span, SyntaxContext, DUMMY_SP};
 use swc_plugin::ast::*;
 
 use crate::ast::*;
 use crate::parse::new_node;
 use crate::span::get_expr_span;
 
+#[inline]
 pub fn ident_expr(ident: Ident) -> Box<Expr> {
   Box::new(Expr::Ident(ident))
 }
 
+#[inline]
 pub fn string_expr(str: &str) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Str(Str {
     raw: None,
@@ -17,14 +20,37 @@ pub fn string_expr(str: &str) -> Box<Expr> {
   })))
 }
 
+#[inline]
+pub fn type_of(expr: Box<Expr>) -> Box<Expr> {
+  Box::new(Expr::Unary(UnaryExpr {
+    op: UnaryOp::TypeOf,
+    arg: expr,
+    span: DUMMY_SP,
+  }))
+}
+
+#[inline]
+pub fn not_eq_eq(left: Box<Expr>, right: Box<Expr>) -> Box<Expr> {
+  Box::new(Expr::Bin(BinExpr {
+    left,
+    op: BinaryOp::NotEqEq,
+    right,
+    span: DUMMY_SP,
+  }))
+}
+
+#[inline]
 pub fn number_u32(i: u32) -> Box<Expr> {
   number_f64(i as f64)
 }
 
+#[inline]
 pub fn number_i32(i: i32) -> Box<Expr> {
   number_f64(i as f64)
 }
 
+#[inline]
+#[inline]
 pub fn number_f64(i: f64) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Num(Number {
     raw: None,
@@ -33,6 +59,7 @@ pub fn number_f64(i: f64) -> Box<Expr> {
   })))
 }
 
+#[inline]
 pub fn prop_access_expr(expr: Box<Expr>, prop: Ident) -> Box<Expr> {
   Box::new(Expr::Member(MemberExpr {
     obj: expr,
@@ -41,6 +68,7 @@ pub fn prop_access_expr(expr: Box<Expr>, prop: Ident) -> Box<Expr> {
   }))
 }
 
+#[inline]
 pub fn ref_expr(expr: Box<Expr>) -> Box<Expr> {
   let body = expr.as_ref().clone();
   let span = get_expr_span(&body);
@@ -52,6 +80,7 @@ pub fn ref_expr(expr: Box<Expr>) -> Box<Expr> {
   )
 }
 
+#[inline]
 pub fn arrow_pointer(expr: Box<Expr>) -> Box<Expr> {
   Box::new(Expr::Arrow(ArrowExpr {
     span: get_expr_span(expr.as_ref()).clone(),
@@ -64,10 +93,12 @@ pub fn arrow_pointer(expr: Box<Expr>) -> Box<Expr> {
   }))
 }
 
+#[inline]
 pub fn this_expr() -> Box<Expr> {
   Box::new(Expr::This(ThisExpr { span: DUMMY_SP }))
 }
 
+#[inline]
 pub fn bool_expr(value: bool) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Bool(Bool {
     span: DUMMY_SP,
@@ -75,14 +106,17 @@ pub fn bool_expr(value: bool) -> Box<Expr> {
   })))
 }
 
+#[inline]
 pub fn true_expr() -> Box<Expr> {
   bool_expr(true)
 }
 
+#[inline]
 pub fn false_expr() -> Box<Expr> {
   bool_expr(false)
 }
 
+#[inline]
 pub fn undefined_expr() -> Box<Expr> {
   Box::new(Expr::Ident(Ident {
     optional: false,
@@ -91,9 +125,28 @@ pub fn undefined_expr() -> Box<Expr> {
   }))
 }
 
+#[inline]
 pub fn empty_array_expr() -> Box<Expr> {
   Box::new(Expr::Array(ArrayLit {
     elems: vec![],
     span: DUMMY_SP,
   }))
+}
+
+#[inline]
+pub fn __filename() -> Box<Expr> {
+  Box::new(Expr::Ident(Ident {
+    optional: false,
+    span: empty_span(),
+    sym: JsWord::from("__filename"),
+  }))
+}
+
+#[inline]
+pub fn empty_span() -> Span {
+  Span {
+    ctxt: SyntaxContext::from_u32(0),
+    hi: BytePos::from_u32(0),
+    lo: BytePos::from_u32(0),
+  }
 }

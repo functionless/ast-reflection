@@ -85,15 +85,25 @@ pub struct ClosureDecorator {
    * An Identifier referencing the `bind` interceptor function injected into all processed modules.
    */
   pub bind: Ident,
+  /**
+   * A counter for generating unique IDs
+   */
+  ids: u32,
 }
 
 impl ClosureDecorator {
+  pub fn next_id(&mut self) -> u32 {
+    self.ids += 1;
+    self.ids
+  }
+
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
       vm: VirtualMachine::new(),
       symbol: private_ident!(SYMBOL_VAR_NAME),
       register: private_ident!(REGISTER_FUNCTION_NAME),
       bind: private_ident!(BIND_FUNCTION_NAME),
+      ids: 0,
     }
   }
 }

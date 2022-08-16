@@ -1,8 +1,9 @@
 use core::panic;
 
 use swc_common::source_map::Pos;
-use swc_common::{BytePos, Span, Spanned, SyntaxContext, DUMMY_SP};
+use swc_common::{Span, Spanned, DUMMY_SP};
 use swc_plugin::ast::*;
+use swc_plugin::utils::quote_ident;
 
 use crate::ast::Node;
 use crate::class_like::ClassLike;
@@ -12,22 +13,6 @@ use crate::method_like::MethodLike;
 use crate::span::*;
 
 const EMPTY_VEC: Vec<Box<Expr>> = vec![];
-
-pub fn empty_span() -> Span {
-  Span {
-    ctxt: SyntaxContext::from_u32(0),
-    hi: BytePos::from_u32(0),
-    lo: BytePos::from_u32(0),
-  }
-}
-
-pub fn __filename() -> Box<Expr> {
-  Box::new(Expr::Ident(Ident {
-    optional: false,
-    span: empty_span(),
-    sym: JsWord::from("__filename"),
-  }))
-}
 
 impl ClosureDecorator {
   /**
@@ -1011,9 +996,6 @@ impl ClosureDecorator {
       ),
       Expr::PrivateName(private_name) => self.parse_private_name(private_name),
       Expr::Seq(seq) => {
-        if seq.exprs.len() < 2 {
-          panic!("SequenceExpression with less than 2 expressions");
-        }
         let first = self.parse_expr(seq.exprs.first().unwrap());
         seq.exprs.iter().skip(1).fold(first, |left, right| {
           new_node(
@@ -1052,7 +1034,11 @@ impl ClosureDecorator {
           self.parse_template(&tagged_template.tpl),
         ],
       ),
-      Expr::This(this) => new_node(Node::ThisExpr, &this.span, vec![Box::new(expr.clone())]),
+      Expr::This(this) => new_node(
+        Node::ThisExpr,
+        &this.span,
+        vec![arrow_pointer(Box::new(expr.clone()))],
+      ),
       // erase <expr> as <type> - take <expr> only
       Expr::TsAs(ts_as) => self.parse_expr(&ts_as.expr),
       // erase <expr> as const - take <expr>
@@ -1438,9 +1424,14 @@ impl ClosureDecorator {
     }
   }
 
-  fn parse_ident(&self, ident: &Ident, is_ref: bool) -> Box<Expr> {
+  fn parse_ident(&mut self, ident: &Ident, is_ref: bool) -> Box<Expr> {
     if is_ref && &ident.sym == "undefined" {
       new_node(Node::UndefinedLiteralExpr, &ident.span, vec![])
+    } else if is_ref && &ident.sym == "arguments" && !self.vm.is_id_visible(ident) {
+      // this is the arguments keyword
+      // TODO: check our assumptions, it is only true when inside a function and when
+      // no other name has been bound to to that name
+      new_node(Node::Identifier, &ident.span, vec![string_expr(&ident.sym)])
     } else if is_ref && !self.vm.is_id_visible(ident) {
       // if this is a free variable, then create a new ReferenceExpr(() => ident)
       new_node(
@@ -1455,9 +1446,15 @@ impl ClosureDecorator {
             return_type: None,
             span: DUMMY_SP,
             type_params: None,
-            body: BlockStmtOrExpr::Expr(Box::new(Expr::Ident(ident.clone()))),
+            body: BlockStmtOrExpr::Expr(Box::new(Expr::Cond(CondExpr {
+              test: not_eq_eq(type_of(ident_expr(ident.clone())), string_expr("undefined")),
+              cons: ident_expr(ident.clone()),
+              alt: ident_expr(quote_ident!("undefined")),
+              span: DUMMY_SP,
+            }))),
           })),
           number_i32(ident.to_id().1.as_u32() as i32),
+          number_u32(self.next_id()),
         ],
       )
     } else {
@@ -1578,14 +1575,10 @@ impl ClosureDecorator {
 }
 
 pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
-  let mut elems: Vec<Option<ExprOrSpread>> = vec![
+  let elems: Vec<Option<ExprOrSpread>> = [
     // kind
     Some(ExprOrSpread {
-      expr: Box::new(Expr::Lit(Lit::Num(Number {
-        raw: None,
-        span: DUMMY_SP,
-        value: kind as i32 as f64,
-      }))),
+      expr: number_i32(kind as i32),
       spread: None,
     }),
     // span
@@ -1596,38 +1589,30 @@ pub fn new_node(kind: Node, span: &Span, args: Vec<Box<Expr>>) -> Box<Expr> {
         elems: vec![
           // start
           Some(ExprOrSpread {
-            expr: Box::new(Expr::Lit(Lit::Num(Number {
-              span: DUMMY_SP,
-              value: span.lo.to_u32() as f64,
-              raw: None,
-            }))),
+            expr: number_u32(span.lo.to_u32()),
             spread: None,
           }),
           // end
           Some(ExprOrSpread {
-            expr: Box::new(Expr::Lit(Lit::Num(Number {
-              span: DUMMY_SP,
-              value: span.hi.to_u32() as f64,
-              raw: None,
-            }))),
+            expr: number_u32(span.hi.to_u32()),
             spread: None,
           }),
         ],
       })),
     }),
-  ];
-
-  // args
-  args.iter().for_each(|arg| {
-    elems.push(Some(ExprOrSpread {
-      expr: arg.to_owned(),
+  ]
+  .into_iter()
+  .chain(args.into_iter().map(|arg| {
+    Some(ExprOrSpread {
+      expr: arg,
       spread: None,
-    }))
-  });
+    })
+  }))
+  .collect();
 
   Box::new(Expr::Array(ArrayLit {
     span: DUMMY_SP,
-    elems: elems,
+    elems,
   }))
 }
 
