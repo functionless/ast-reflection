@@ -27,18 +27,6 @@ use crate::virtual_machine::VirtualMachine;
 const REGISTER_FUNCTION_NAME: &str = "register_8269d1a8";
 
 /**
- * This name doesn't really matter as we use a private_ident!() to identify the
- * variable pointing to the global symbols. We name it this for three reasons:
- * 1. consistency with register_ and bind_
- * 2. avoid conflict in 99.9% of cases without forcing re-name of source identifiers
- *    -> if we named it "Symbol", for example, we would force rename of any source Symbol
- *       identifiers to Symbol1. This would be safe but in the spirit of minimizing mutation
- *       of source, we'll append the salt, "8269d1a8".
- * 3. easily identify all of Functionless's injected code via the salt, "8269d1a8".
- */
-const SYMBOL_VAR_NAME: &str = "Symbol_8269d1a8";
-
-/**
  * Name of the `bind` function that is injected into all compiled source files.
  *
  * ```ts
@@ -68,15 +56,19 @@ const SYMBOL_VAR_NAME: &str = "Symbol_8269d1a8";
  */
 const BIND_FUNCTION_NAME: &str = "bind_8269d1a8";
 
+const GLOBAL_THIS_NAME: &str = "global_8269d1a8";
+
+const PROXY_FUNCTION_NAME: &str = "proxy_8269d1a8";
+
 pub struct ClosureDecorator {
   /**
    * A Virtual Machine managing lexical scope as we walk the tree.
    */
   pub vm: VirtualMachine,
   /**
-   * A private identifier to Symbol.
+   * A private identifier to globalThis.
    */
-  pub symbol: Ident,
+  pub global: Ident,
   /**
    * An Identifier referencing the `register` interceptor function injected into all processed modules.
    */
@@ -85,6 +77,10 @@ pub struct ClosureDecorator {
    * An Identifier referencing the `bind` interceptor function injected into all processed modules.
    */
   pub bind: Ident,
+  /**
+   * An Identifier referencing the `proxy` interceptor function injected into all processed modules.
+   */
+  pub proxy: Ident,
   /**
    * A counter for generating unique IDs
    */
@@ -100,9 +96,10 @@ impl ClosureDecorator {
   pub fn new() -> ClosureDecorator {
     ClosureDecorator {
       vm: VirtualMachine::new(),
-      symbol: private_ident!(SYMBOL_VAR_NAME),
+      global: private_ident!(GLOBAL_THIS_NAME),
       register: private_ident!(REGISTER_FUNCTION_NAME),
       bind: private_ident!(BIND_FUNCTION_NAME),
+      proxy: private_ident!(PROXY_FUNCTION_NAME),
       ids: 0,
     }
   }
@@ -111,9 +108,10 @@ impl ClosureDecorator {
 impl VisitMut for ClosureDecorator {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     let new_stmts: Vec<ModuleItem> = [
-      ModuleItem::Stmt(Stmt::Decl(self.create_symbol_var())),
-      ModuleItem::Stmt(Stmt::Decl(self.create_register_function())),
-      ModuleItem::Stmt(Stmt::Decl(self.create_bind_function())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_global_this())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_register_interceptor())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_bind_interceptor())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_proxy_interceptor())),
     ]
     .into_iter()
     .chain(
@@ -277,6 +275,48 @@ impl VisitMut for ClosureDecorator {
         //   () => [..], // function that produces the function expression's AST
         // )
         *expr = *self.register_mut_ast(&mut Expr::Fn(func.take()), ast);
+      }
+      Expr::New(new) if new.args.is_some() => {
+        // detect if this looks like a new Proxy
+        // e.g. `new Proxy({}, {})`
+        let maybe_proxy_class = match new.callee.as_mut() {
+          Expr::Ident(ident) if &ident.sym == "Proxy" => Some(ident),
+          _ => None,
+        };
+
+        if maybe_proxy_class.is_some() {
+          let proxy_class = maybe_proxy_class.unwrap();
+
+          let args: Vec<ExprOrSpread> = iter::once(ExprOrSpread {
+            expr: Box::new(Expr::Ident(proxy_class.take())),
+            spread: None,
+          })
+          .chain(
+            new
+              .args
+              .as_mut()
+              .unwrap()
+              .iter_mut()
+              .map(|arg| ExprOrSpread {
+                spread: None,
+                expr: arg.expr.take(),
+              }),
+          )
+          .collect();
+
+          // replace the NewExpr with a call to the `bind` interceptor function
+          // foo.bind(bar)
+          // =>
+          // bind(foo, bar);
+          *expr = Expr::Call(CallExpr {
+            callee: Callee::Expr(Box::new(Expr::Ident(self.proxy.clone()))),
+            span: new.span.clone(),
+            type_args: None,
+            args: args,
+          });
+
+          expr.visit_mut_children_with(self);
+        }
       }
       _ => {
         expr.visit_mut_children_with(self);
@@ -489,10 +529,10 @@ impl ClosureDecorator {
   }
 
   /**
-   * Declare a private variable pointing to the global Symbol primitive
-   * const Symbol = register_8269d1a8.constructor("return this")().Symbol;
+   * Declare a private variable pointing to the globalThis without possibility of lexical scope collision.
+   * const Global_8269d1a8 = register_8269d1a8.constructor("return this")();
    */
-  fn create_symbol_var(&self) -> Decl {
+  fn create_global_this(&self) -> Decl {
     Decl::Var(VarDecl {
       declare: false,
       kind: VarDeclKind::Const,
@@ -501,39 +541,39 @@ impl ClosureDecorator {
         span: DUMMY_SP,
         definite: false,
         name: Pat::Ident(BindingIdent {
-          id: self.symbol.clone(),
+          id: self.global.clone(),
           type_ann: None,
         }),
-        init: Some(Box::new(Expr::Member(MemberExpr {
+        init: Some(Box::new(Expr::Call(CallExpr {
           span: DUMMY_SP,
-          obj: Box::new(Expr::Call(CallExpr {
+          type_args: None,
+          callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
             span: DUMMY_SP,
             type_args: None,
-            callee: Callee::Expr(Box::new(Expr::Call(CallExpr {
-              span: DUMMY_SP,
-              type_args: None,
-              callee: Callee::Expr(prop_access_expr(
-                ident_expr(self.register.clone()),
-                quote_ident!("constructor"),
-              )),
-              args: vec![ExprOrSpread {
-                spread: None,
-                expr: string_expr("return this;"),
-              }],
-            }))),
-            args: vec![],
-          })),
-          prop: MemberProp::Ident(quote_ident!("Symbol")),
+            callee: Callee::Expr(prop_access_expr(
+              ident_expr(self.register.clone()),
+              quote_ident!("constructor"),
+            )),
+            args: vec![ExprOrSpread {
+              spread: None,
+              expr: string_expr("return this;"),
+            }],
+          }))),
+          args: vec![],
         }))),
       }],
     })
   }
 
-  // function register(func, ast) {
-  //   func[Symbol.for("functionless:ast")] = ast;
-  //   return func;
-  // }
-  fn create_register_function(&self) -> Decl {
+  fn symbol_ref(&self) -> Box<Expr> {
+    Box::new(Expr::Member(MemberExpr {
+      obj: Box::new(Expr::Ident(self.global.clone())),
+      span: DUMMY_SP,
+      prop: MemberProp::Ident(quote_ident!("Symbol")),
+    }))
+  }
+
+  fn create_register_interceptor(&self) -> Decl {
     let func = quote_ident!("func");
     let ast = quote_ident!("ast");
     Decl::Fn(FnDecl {
@@ -561,14 +601,7 @@ impl ClosureDecorator {
     })
   }
 
-  // function bind(func, self, ...args) {
-  //   const f = func.bind(self, ...args);
-  //   f[Symbol.for("functionless:BoundThis")] = self;
-  //   f[Symbol.for("functionless:BoundArgs")] = args;
-  //   f[Symbol.for("functionless:TargetFunction")] = func;
-  //   return func.bind(self, ...args);
-  //}
-  fn create_bind_function(&self) -> Decl {
+  fn create_bind_interceptor(&self) -> Decl {
     let func = quote_ident!("func");
     let this = quote_ident!("self");
     let args = quote_ident!("args");
@@ -664,6 +697,157 @@ impl ClosureDecorator {
     })
   }
 
+  fn create_proxy_interceptor(&self) -> Decl {
+    let clss = quote_ident!("clss");
+    let args = quote_ident!("args");
+    let proxy = quote_ident!("proxy");
+    let proxy_map = quote_ident!("proxyMap");
+    let global_proxies = Expr::Member(MemberExpr {
+      span: DUMMY_SP,
+      obj: Box::new(Expr::Ident(self.global.clone())),
+      prop: MemberProp::Computed(ComputedPropName {
+        expr: self.symbol_for("functionless:Proxies"),
+        span: DUMMY_SP,
+      }),
+    });
+
+    Decl::Fn(FnDecl {
+      declare: false,
+      ident: self.proxy.clone(),
+      function: Function {
+        is_async: false,
+        is_generator: false,
+        decorators: vec![],
+        span: DUMMY_SP,
+        type_params: None,
+        return_type: None,
+        params: vec![param(clss.clone(), false), param(args.clone(), true)],
+        body: Some(BlockStmt {
+          span: DUMMY_SP,
+          stmts: vec![
+            // const proxy = new clss(...args);
+            Stmt::Decl(Decl::Var(VarDecl {
+              declare: false,
+              kind: VarDeclKind::Const,
+              decls: vec![VarDeclarator {
+                definite: false,
+                span: DUMMY_SP,
+                name: Pat::Ident(BindingIdent {
+                  id: proxy.clone(),
+                  type_ann: None,
+                }),
+                init: Some(Box::new(Expr::New(NewExpr {
+                  span: DUMMY_SP,
+                  type_args: None,
+                  callee: Box::new(Expr::Ident(clss.clone())),
+                  args: Some(vec![ExprOrSpread {
+                    expr: Box::new(Expr::Ident(args.clone())),
+                    spread: Some(DUMMY_SP),
+                  }]),
+                }))),
+              }],
+              span: DUMMY_SP,
+            })),
+            // if (globalThis.util.types.isProxy(proxy))
+            Stmt::If(IfStmt {
+              test: Box::new(Expr::Call(CallExpr {
+                type_args: None,
+                span: DUMMY_SP,
+                callee: Callee::Expr(prop_access_expr(
+                  prop_access_expr(
+                    prop_access_expr(
+                      Box::new(Expr::Ident(self.global.clone())),
+                      quote_ident!("util"),
+                    ),
+                    quote_ident!("types"),
+                  ),
+                  quote_ident!("isProxy"),
+                )),
+                args: vec![ExprOrSpread {
+                  expr: Box::new(Expr::Ident(proxy.clone())),
+                  spread: None,
+                }],
+              })),
+              alt: None,
+              span: DUMMY_SP,
+              cons: Box::new(Stmt::Block(BlockStmt {
+                span: DUMMY_SP,
+                stmts: vec![
+                  // const proxyMap = (globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap());
+                  Stmt::Decl(Decl::Var(VarDecl {
+                    declare: false,
+                    span: DUMMY_SP,
+                    kind: VarDeclKind::Const,
+                    decls: vec![VarDeclarator {
+                      definite: false,
+                      span: DUMMY_SP,
+                      name: Pat::Ident(BindingIdent {
+                        id: proxy_map.clone(),
+                        type_ann: None,
+                      }),
+                      init: Some(Box::new(Expr::Assign(AssignExpr {
+                        // globalThis.proxies
+                        left: PatOrExpr::Expr(Box::new(global_proxies.clone())),
+                        op: AssignOp::Assign,
+                        span: DUMMY_SP,
+                        right: Box::new(Expr::Bin(BinExpr {
+                          op: BinaryOp::NullishCoalescing,
+                          // globalThis.proxies
+                          left: Box::new(global_proxies.clone()),
+                          span: DUMMY_SP,
+                          // new globalThis.WeakMap()
+                          right: Box::new(Expr::New(NewExpr {
+                            type_args: None,
+                            span: DUMMY_SP,
+                            // globalThis.WeakMap
+                            callee: Box::new(Expr::Member(MemberExpr {
+                              span: DUMMY_SP,
+                              obj: Box::new(Expr::Ident(self.global.clone())),
+                              prop: MemberProp::Ident(quote_ident!("WeakMap")),
+                            })),
+                            args: None,
+                          })),
+                        })),
+                      }))),
+                    }],
+                  })),
+                  // proxyMap.set(proxy, args),
+                  Stmt::Expr(ExprStmt {
+                    expr: Box::new(Expr::Call(CallExpr {
+                      type_args: None,
+                      span: DUMMY_SP,
+                      callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
+                        obj: Box::new(Expr::Ident(proxy_map.clone())),
+                        prop: MemberProp::Ident(quote_ident!("set")),
+                        span: DUMMY_SP,
+                      }))),
+                      args: vec![
+                        ExprOrSpread {
+                          expr: Box::new(Expr::Ident(proxy.clone())),
+                          spread: None,
+                        },
+                        ExprOrSpread {
+                          expr: Box::new(Expr::Ident(args.clone())),
+                          spread: None,
+                        },
+                      ],
+                    })),
+                    span: DUMMY_SP,
+                  }),
+                ],
+              })),
+            }),
+            // return proxy
+            Stmt::Return(ReturnStmt {
+              span: DUMMY_SP,
+              arg: Some(Box::new(Expr::Ident(proxy.clone()))),
+            }),
+          ],
+        }),
+      },
+    })
+  }
+
   fn set_symbol(&self, on: Ident, sym: &str, to: Ident) -> Stmt {
     Stmt::Expr(ExprStmt {
       span: DUMMY_SP,
@@ -674,23 +858,7 @@ impl ClosureDecorator {
           span: DUMMY_SP,
           prop: MemberProp::Computed(ComputedPropName {
             span: DUMMY_SP,
-            // Symbol.for("functionless:AST")
-            expr: Box::new(Expr::Call(CallExpr {
-              callee: Callee::Expr(prop_access_expr(
-                ident_expr(self.symbol.clone()),
-                quote_ident!("for"),
-              )),
-              args: vec![ExprOrSpread {
-                expr: Box::new(Expr::Lit(Lit::Str(Str {
-                  raw: None,
-                  span: DUMMY_SP,
-                  value: JsWord::from(sym),
-                }))),
-                spread: None,
-              }],
-              span: DUMMY_SP,
-              type_args: None,
-            })),
+            expr: self.symbol_for(sym),
           }),
         }))),
         op: AssignOp::Assign,
@@ -698,6 +866,22 @@ impl ClosureDecorator {
         span: DUMMY_SP,
       })),
     })
+  }
+
+  fn symbol_for(&self, sym: &str) -> Box<Expr> {
+    Box::new(Expr::Call(CallExpr {
+      callee: Callee::Expr(prop_access_expr(self.symbol_ref(), quote_ident!("for"))),
+      args: vec![ExprOrSpread {
+        expr: Box::new(Expr::Lit(Lit::Str(Str {
+          raw: None,
+          span: DUMMY_SP,
+          value: JsWord::from(sym),
+        }))),
+        spread: None,
+      }],
+      span: DUMMY_SP,
+      type_args: None,
+    }))
   }
 }
 
