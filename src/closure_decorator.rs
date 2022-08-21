@@ -314,9 +314,9 @@ impl VisitMut for ClosureDecorator {
             type_args: None,
             args: args,
           });
-
-          expr.visit_mut_children_with(self);
         }
+
+        expr.visit_mut_children_with(self);
       }
       _ => {
         expr.visit_mut_children_with(self);
