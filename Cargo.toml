@@ -17,13 +17,9 @@ swc_core = { version = "0.17.0", features = [
   "ast",
   "common",
 ] }
-swc_ecma_transforms_base = "0.104.4"
-swc_ecma_transforms_typescript = "0.151.0"
 im = "*"
 strum = "0.24"
 strum_macros = "0.24"
 
 [dev-dependencies]
-swc_ecma_parser = "0.118.3"
-swc_ecma_transforms_testing = "0.107.0"
-testing = "0.26.0"
+testing = "0.29.4"
