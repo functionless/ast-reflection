@@ -1,5 +1,5 @@
-use swc_common::Span;
 use swc_core::ast::*;
+use swc_core::common::Span;
 
 pub trait MethodLike {
   fn function<'a>(&'a self) -> &'a Function;

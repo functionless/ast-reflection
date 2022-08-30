@@ -1,5 +1,5 @@
 use closure_decorator::ClosureDecorator;
-use swc_common::Mark;
+use swc_core::common::Mark;
 
 use swc_core::{
   ast::Program,

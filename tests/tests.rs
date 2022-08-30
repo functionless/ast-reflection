@@ -1,6 +1,6 @@
+use ast_reflection::wrap;
 use std::path::PathBuf;
-use swc_closure::wrap;
-use swc_common::{chain, Mark};
+use swc_core::common::{chain, Mark};
 use swc_ecma_transforms_base::resolver;
 
 use swc_ecma_parser::{EsConfig, Syntax};
@@ -19,7 +19,7 @@ fn exec(input: PathBuf) {
   );
 }
 
-fn test_runner() -> impl swc_ecma_visit::Fold {
+fn test_runner() -> impl swc_core::visit::Fold {
   let mark = Mark::fresh(Mark::root());
 
   chain!(resolver(Mark::new(), mark, false), wrap(mark))
