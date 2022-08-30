@@ -1,5 +1,5 @@
 use im::HashSet;
-use swc_plugin::{ast::*, utils::StmtLike};
+use swc_core::{ast::*, utils::StmtLike};
 
 /**
  * A mapping of [reference name](JsWord) to the [unique id](u32) of that reference.

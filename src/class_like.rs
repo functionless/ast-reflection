@@ -1,4 +1,4 @@
-use swc_plugin::ast::*;
+use swc_core::ast::*;
 
 use crate::ast::Node;
 
