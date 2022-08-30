@@ -1,5 +1,5 @@
 use swc_common::Span;
-use swc_plugin::ast::*;
+use swc_core::ast::*;
 
 pub fn get_expr_span<'a>(expr: &'a Expr) -> &'a Span {
   match expr {

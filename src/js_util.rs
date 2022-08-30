@@ -1,6 +1,8 @@
+use swc_atoms::JsWord;
 use swc_common::source_map::Pos;
 use swc_common::{BytePos, Span, SyntaxContext, DUMMY_SP};
-use swc_plugin::ast::*;
+use swc_core::ast::*;
+use swc_core::utils::quote_ident;
 
 use crate::ast::*;
 use crate::parse::new_node;
@@ -9,6 +11,19 @@ use crate::span::get_expr_span;
 #[inline]
 pub fn ident_expr(ident: Ident) -> Box<Expr> {
   Box::new(Expr::Ident(ident))
+}
+
+#[inline]
+pub fn require_expr(module: &str) -> Box<Expr> {
+  Box::new(Expr::Call(CallExpr {
+    type_args: None,
+    span: DUMMY_SP,
+    callee: Callee::Expr(ident_expr(quote_ident!("require"))),
+    args: vec![ExprOrSpread {
+      expr: string_expr(module),
+      spread: None,
+    }],
+  }))
 }
 
 #[inline]
@@ -49,7 +64,6 @@ pub fn number_i32(i: i32) -> Box<Expr> {
   number_f64(i as f64)
 }
 
-#[inline]
 #[inline]
 pub fn number_f64(i: f64) -> Box<Expr> {
   Box::new(Expr::Lit(Lit::Num(Number {

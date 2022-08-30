@@ -1,12 +1,15 @@
 use std::iter;
 
+use swc_atoms::JsWord;
 use swc_common::{util::take::Take, DUMMY_SP};
-use swc_ecma_visit::VisitMut;
-use swc_plugin::ast::*;
-use swc_plugin::utils::{prepend_stmts, private_ident, quote_ident};
+use swc_core::ast::*;
+use swc_core::utils::{prepend_stmts, private_ident, quote_ident};
+use swc_core::visit::*;
 
 use crate::class_like::ClassLike;
-use crate::js_util::{ident_expr, prop_access_expr, ref_expr, string_expr, this_expr};
+use crate::js_util::{
+  ident_expr, prop_access_expr, ref_expr, require_expr, string_expr, this_expr,
+};
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
@@ -60,6 +63,8 @@ const GLOBAL_THIS_NAME: &str = "global_8269d1a8";
 
 const PROXY_FUNCTION_NAME: &str = "proxy_8269d1a8";
 
+const UTIL_FUNCTION_NAME: &str = "util_8269d1a8";
+
 pub struct ClosureDecorator {
   /**
    * A Virtual Machine managing lexical scope as we walk the tree.
@@ -82,6 +87,10 @@ pub struct ClosureDecorator {
    */
   pub proxy: Ident,
   /**
+   * An Identifier referencing NodeJS's `util` module.
+   */
+  pub util: Ident,
+  /**
    * A counter for generating unique IDs
    */
   ids: u32,
@@ -100,6 +109,7 @@ impl ClosureDecorator {
       register: private_ident!(REGISTER_FUNCTION_NAME),
       bind: private_ident!(BIND_FUNCTION_NAME),
       proxy: private_ident!(PROXY_FUNCTION_NAME),
+      util: private_ident!(UTIL_FUNCTION_NAME),
       ids: 0,
     }
   }
@@ -109,6 +119,7 @@ impl VisitMut for ClosureDecorator {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     let new_stmts: Vec<ModuleItem> = [
       ModuleItem::Stmt(Stmt::Decl(self.create_global_this())),
+      ModuleItem::Stmt(Stmt::Decl(self.create_import_util())),
       ModuleItem::Stmt(Stmt::Decl(self.create_register_interceptor())),
       ModuleItem::Stmt(Stmt::Decl(self.create_bind_interceptor())),
       ModuleItem::Stmt(Stmt::Decl(self.create_proxy_interceptor())),
@@ -573,6 +584,23 @@ impl ClosureDecorator {
     }))
   }
 
+  fn create_import_util(&self) -> Decl {
+    Decl::Var(VarDecl {
+      declare: false,
+      span: DUMMY_SP,
+      kind: VarDeclKind::Const,
+      decls: vec![VarDeclarator {
+        definite: false,
+        span: DUMMY_SP,
+        name: Pat::Ident(BindingIdent {
+          id: self.util.clone(),
+          type_ann: None,
+        }),
+        init: Some(require_expr("util")),
+      }],
+    })
+  }
+
   fn create_register_interceptor(&self) -> Decl {
     let func = quote_ident!("func");
     let ast = quote_ident!("ast");
@@ -754,13 +782,7 @@ impl ClosureDecorator {
                 type_args: None,
                 span: DUMMY_SP,
                 callee: Callee::Expr(prop_access_expr(
-                  prop_access_expr(
-                    prop_access_expr(
-                      Box::new(Expr::Ident(self.global.clone())),
-                      quote_ident!("util"),
-                    ),
-                    quote_ident!("types"),
-                  ),
+                  prop_access_expr(ident_expr(self.util.clone()), quote_ident!("types")),
                   quote_ident!("isProxy"),
                 )),
                 args: vec![ExprOrSpread {
