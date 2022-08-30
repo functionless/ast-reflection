@@ -7,7 +7,7 @@ const project = new javascript.NodeProject({
   release: true,
   releaseToNpm: true,
   gitignore: ["/dist/", "/target/", "/ast_reflection.wasm"],
-  peerDeps: ["@swc/core@1.2.218"],
+  peerDeps: ["@swc/core"],
   workflowBootstrapSteps: [
     {
       name: "Install rust",
