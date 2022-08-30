@@ -1,8 +1,8 @@
 use core::panic;
 
-use swc_common::source_map::Pos;
-use swc_common::{Span, Spanned, DUMMY_SP};
 use swc_core::ast::*;
+use swc_core::common::source_map::Pos;
+use swc_core::common::{Span, Spanned, DUMMY_SP};
 use swc_core::utils::quote_ident;
 
 use crate::ast::Node;

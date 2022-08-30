@@ -10,21 +10,16 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 serde = "1"
 swc_atoms = "0.4.9"
-swc_core = { version = "0.14.0", features = [
+swc_core = { version = "0.17.0", features = [
   "plugin_transform",
   "utils",
   "visit",
   "ast",
   "common",
 ] }
-swc_common = "0.27.13"
-swc_ecma_transforms_base = "0.104.4"
-swc_ecma_transforms_typescript = "0.150.0"
 im = "*"
 strum = "0.24"
 strum_macros = "0.24"
 
 [dev-dependencies]
-swc_ecma_parser = "0.118.1"
-swc_ecma_transforms_testing = "0.106.0"
-testing = "0.26.0"
+testing = "0.29.4"

@@ -1,8 +1,9 @@
 use std::iter;
 
 use swc_atoms::JsWord;
-use swc_common::{util::take::Take, DUMMY_SP};
 use swc_core::ast::*;
+use swc_core::common::util::take::Take;
+use swc_core::common::DUMMY_SP;
 use swc_core::utils::{prepend_stmts, private_ident, quote_ident};
 use swc_core::visit::*;
 
