@@ -67,9 +67,11 @@ impl ClosureDecorator {
   }
 
   pub fn parse_ctor(&mut self, ctor: &Constructor) -> Box<Expr> {
+    self.vm.enter();
+
     self.vm.bind_constructor_params(&ctor.params);
 
-    new_node(
+    let node = new_node(
       Node::ConstructorDecl,
       &ctor.span,
       vec![
@@ -105,7 +107,11 @@ impl ClosureDecorator {
         })),
         self.parse_block(ctor.body.as_ref().unwrap()),
       ],
-    )
+    );
+
+    self.vm.exit();
+
+    node
   }
 
   pub fn parse_function_decl(&mut self, function: &FnDecl, is_root: bool) -> Box<Expr> {
