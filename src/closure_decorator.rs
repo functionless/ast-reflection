@@ -4,6 +4,7 @@ use swc_atoms::JsWord;
 use swc_core::ast::*;
 use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
+use swc_core::plugin::proxies::PluginSourceMapProxy;
 use swc_core::utils::{prepend_stmts, private_ident, quote_ident};
 use swc_core::visit::*;
 
@@ -66,7 +67,9 @@ const PROXY_FUNCTION_NAME: &str = "proxy_8269d1a8";
 
 const UTIL_FUNCTION_NAME: &str = "util_8269d1a8";
 
-pub struct ClosureDecorator {
+pub struct ClosureDecorator<'a> {
+  pub source_map: &'a PluginSourceMapProxy,
+
   /**
    * A Virtual Machine managing lexical scope as we walk the tree.
    */
@@ -97,14 +100,15 @@ pub struct ClosureDecorator {
   ids: u32,
 }
 
-impl ClosureDecorator {
+impl<'a> ClosureDecorator<'a> {
   pub fn next_id(&mut self) -> u32 {
     self.ids += 1;
     self.ids
   }
 
-  pub fn new() -> ClosureDecorator {
+  pub fn new(source_map: &PluginSourceMapProxy) -> ClosureDecorator {
     ClosureDecorator {
+      source_map,
       vm: VirtualMachine::new(),
       global: private_ident!(GLOBAL_THIS_NAME),
       register: private_ident!(REGISTER_FUNCTION_NAME),
@@ -116,7 +120,7 @@ impl ClosureDecorator {
   }
 }
 
-impl VisitMut for ClosureDecorator {
+impl<'a> VisitMut for ClosureDecorator<'a> {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     let new_stmts: Vec<ModuleItem> = [
       ModuleItem::Stmt(Stmt::Decl(self.create_global_this())),
@@ -337,7 +341,7 @@ impl VisitMut for ClosureDecorator {
   }
 }
 
-impl ClosureDecorator {
+impl<'a> ClosureDecorator<'a> {
   /**
    * Generic visitor for ClassDecl and ClassExpr.
    *
@@ -390,7 +394,11 @@ impl ClosureDecorator {
   }
 
   fn register_class_method(&mut self, method: &ClassMethod) -> Stmt {
-    let method_ast = self.parse_method_like(method, Some(ref_expr(this_expr())), &method.span);
+    let method_ast = self.parse_method_like(
+      method,
+      Some(ref_expr(self.source_map, this_expr())),
+      &method.span,
+    );
 
     let this = Box::new(if method.is_static {
       // `this` if it is static

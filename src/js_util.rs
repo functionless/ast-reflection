@@ -2,6 +2,7 @@ use swc_atoms::JsWord;
 use swc_core::ast::*;
 use swc_core::common::source_map::Pos;
 use swc_core::common::{BytePos, Span, SyntaxContext, DUMMY_SP};
+use swc_core::plugin::proxies::PluginSourceMapProxy;
 use swc_core::utils::quote_ident;
 
 use crate::ast::*;
@@ -83,11 +84,12 @@ pub fn prop_access_expr(expr: Box<Expr>, prop: Ident) -> Box<Expr> {
 }
 
 #[inline]
-pub fn ref_expr(expr: Box<Expr>) -> Box<Expr> {
+pub fn ref_expr(source_map: &PluginSourceMapProxy, expr: Box<Expr>) -> Box<Expr> {
   let body = expr.as_ref().clone();
   let span = get_expr_span(&body);
   let pointer = arrow_pointer(expr);
   new_node(
+    source_map,
     Node::ReferenceExpr,
     span,
     vec![string_expr(""), pointer, number_i32(-1)],
