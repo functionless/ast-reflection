@@ -68,8 +68,10 @@ const PROXY_FUNCTION_NAME: &str = "proxy_8269d1a8";
 const UTIL_FUNCTION_NAME: &str = "util_8269d1a8";
 
 pub struct ClosureDecorator<'a> {
+  /**
+   * A reference to the source file's source map. We need this to map byte positions back to line and column.
+   */
   pub source_map: &'a PluginSourceMapProxy,
-
   /**
    * A Virtual Machine managing lexical scope as we walk the tree.
    */
