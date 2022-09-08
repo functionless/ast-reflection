@@ -1727,7 +1727,12 @@ pub fn new_node(
   span: &Span,
   args: Vec<Box<Expr>>,
 ) -> Box<Expr> {
-  let line_col = source_map.lookup_char_pos(span.lo());
+  let (line, col) = if span.lo().0 == 0 {
+    (1, 0)
+  } else {
+    let loc = source_map.lookup_char_pos(span.lo());
+    (loc.line as u32, loc.col_display as u32)
+  };
 
   let elems: Vec<Option<ExprOrSpread>> = [
     // kind
@@ -1743,12 +1748,12 @@ pub fn new_node(
         elems: vec![
           // line
           Some(ExprOrSpread {
-            expr: number_u32(line_col.line as u32),
+            expr: number_u32(line),
             spread: None,
           }),
           // col
           Some(ExprOrSpread {
-            expr: number_u32(line_col.col_display as u32),
+            expr: number_u32(col),
             spread: None,
           }),
         ],
