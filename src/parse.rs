@@ -1729,6 +1729,7 @@ pub fn new_node(
   let (line, col) = if span.lo().0 == 0 {
     // lookup_char_pos has a terrible interface because it panics on a position of 0
     // see: https://github.com/swc-project/swc/issues/2757
+    // see: https://github.com/swc-project/swc/issues/5535
     // TODO: investigate how we get here with a 0 span - a DUMMY_SP should never be used as the source of a parsed node
     //       -> may be related to why we're getting broken source maps?
     (1, 0)
