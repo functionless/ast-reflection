@@ -1,10 +1,9 @@
 use closure_decorator::ClosureDecorator;
-use swc_core::common::Mark;
 
 use swc_core::{
   ast::Program,
   plugin::{plugin_transform, proxies::TransformPluginProgramMetadata},
-  visit::{as_folder, Fold, VisitMut, VisitMutWith},
+  visit::VisitMutWith,
 };
 
 mod ast;
@@ -18,12 +17,8 @@ mod span;
 mod virtual_machine;
 
 #[plugin_transform]
-pub fn wrap_closures(mut program: Program, _: TransformPluginProgramMetadata) -> Program {
-  program.visit_mut_with(&mut ClosureDecorator::new());
+pub fn wrap_closures(mut program: Program, meta: TransformPluginProgramMetadata) -> Program {
+  program.visit_mut_with(&mut ClosureDecorator::new(&meta.source_map));
 
   program
-}
-
-pub fn wrap(_top_level_mark: Mark) -> impl Fold + VisitMut {
-  as_folder(ClosureDecorator::new())
 }
