@@ -1027,9 +1027,11 @@ impl<'a> ClosureDecorator<'a> {
                   &concat_span(&get_prop_name_span(&method.key), &method.function.span),
                 ),
                 Prop::Setter(setter) => {
+                  self.vm.enter();
+
                   self.vm.bind_pat(&setter.param);
 
-                  new_node(
+                  let node = new_node(
                     self.source_map,
                     Node::SetAccessorDecl,
                     &setter.span,
@@ -1040,7 +1042,11 @@ impl<'a> ClosureDecorator<'a> {
                       false_expr(),
                       undefined_expr(),
                     ],
-                  )
+                  );
+
+                  self.vm.exit();
+
+                  node
                 }
                 Prop::Shorthand(ident) => new_node(
                   self.source_map,
