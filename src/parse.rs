@@ -548,7 +548,7 @@ impl<'a> ClosureDecorator<'a> {
             //            ^
             self.vm.bind_var_decl(var_decl);
 
-            self.parse_var_declarator(var_decl.decls.first().unwrap())
+            self.parse_var_decl(var_decl)
           }
           //  for (i in items)
           //       ^ not a new name, so no binding created
@@ -583,7 +583,7 @@ impl<'a> ClosureDecorator<'a> {
             //             ^
             self.vm.bind_var_decl(var_decl);
 
-            self.parse_var_declarator(var_decl.decls.first().unwrap())
+            self.parse_var_decl(var_decl)
           }
           // for (i of items)
           //      ^ not a new name, so no binding created
