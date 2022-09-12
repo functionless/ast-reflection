@@ -1026,18 +1026,28 @@ impl<'a> ClosureDecorator<'a> {
                   None,
                   &concat_span(&get_prop_name_span(&method.key), &method.function.span),
                 ),
-                Prop::Setter(setter) => new_node(
-                  self.source_map,
-                  Node::SetAccessorDecl,
-                  &setter.span,
-                  vec![
-                    self.parse_prop_name(&setter.key),
-                    self.parse_pat(&setter.param),
-                    self.parse_block(setter.body.as_ref().unwrap()),
-                    false_expr(),
-                    undefined_expr(),
-                  ],
-                ),
+                Prop::Setter(setter) => {
+                  self.vm.enter();
+
+                  self.vm.bind_pat(&setter.param);
+
+                  let node = new_node(
+                    self.source_map,
+                    Node::SetAccessorDecl,
+                    &setter.span,
+                    vec![
+                      self.parse_prop_name(&setter.key),
+                      self.parse_pat_param(&setter.param, None),
+                      self.parse_block(setter.body.as_ref().unwrap()),
+                      false_expr(),
+                      undefined_expr(),
+                    ],
+                  );
+
+                  self.vm.exit();
+
+                  node
+                }
                 Prop::Shorthand(ident) => new_node(
                   self.source_map,
                   Node::PropAssignExpr,
