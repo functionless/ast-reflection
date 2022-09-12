@@ -1032,7 +1032,7 @@ impl<'a> ClosureDecorator<'a> {
                   &setter.span,
                   vec![
                     self.parse_prop_name(&setter.key),
-                    self.parse_pat(&setter.param),
+                    self.parse_pat_param(&setter.param, None),
                     self.parse_block(setter.body.as_ref().unwrap()),
                     false_expr(),
                     undefined_expr(),
