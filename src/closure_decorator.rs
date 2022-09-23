@@ -26,9 +26,9 @@ use crate::virtual_machine::VirtualMachine;
 const REGISTER_FLAG: &str = "REGISTER_8269d1a8";
 // (REGISTER_REF,stash[]=ast)
 const REGISTER_REF_FLAG: &str = "REGISTER_REF_8269d1a8";
-// // (BIND, ... todo)
+// // (BIND, ...)
 const BIND_FLAG: &str = "BIND_8269d1a8";
-// // (PROXY, ... todo)
+// // (PROXY, ...)
 const PROXY_FLAG: &str = "PROXY_8269d1a8";
 
 const GLOBAL_THIS_NAME: &str = "global_8269d1a8";
@@ -828,10 +828,10 @@ impl<'a> ClosureDecorator<'a> {
   /**
    * ("PROXY",
    *    stash={ args }, // ensure the args are only evaluated once
-   *    stash={ proxy: new clss(...stash.args), ...stash },
+   *    stash={ proxy: new clss(...stash.args), ...stash }, // create the proxy
    *    globalThis.util.types.isProxy(stash.proxy) && (
    *       globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap(),
-   *       proxyMap.set(proxy, args)
+   *       proxyMap.set(stash.proxy, stash.args)
    *    ),
    *    proxy
    * )
