@@ -5,7 +5,7 @@ use swc_core::ast::*;
 use swc_core::common::util::take::Take;
 use swc_core::common::DUMMY_SP;
 use swc_core::plugin::proxies::PluginSourceMapProxy;
-use swc_core::utils::{prepend_stmts, private_ident, quote_ident};
+use swc_core::utils::{prepend_stmts, private_ident, quote_ident, quote_str};
 use swc_core::visit::*;
 
 use crate::class_like::ClassLike;
@@ -26,40 +26,10 @@ use crate::virtual_machine::VirtualMachine;
 const REGISTER_FLAG: &str = "REGISTER_8269d1a8";
 // (REGISTER_REF,stash[]=ast)
 const REGISTER_REF_FLAG: &str = "REGISTER_REF_8269d1a8";
-// // (stash=BIND, ... todo)
-// const BIND_FLAG: &str = "BIND_8269d1a8";
-// // (stash=PROXY, ... todo)
+// // (BIND, ... todo)
+const BIND_FLAG: &str = "BIND_8269d1a8";
+// // (PROXY, ... todo)
 // const PROXY_FLAG: &str = "PROXY_8269d1a8";
-
-/**
- * Name of the `bind` function that is injected into all compiled source files.
- *
- * ```ts
- * function bind_8269d1a8(func, self, ...args) {
- *   const tmp = func.bind(self, ...args);
- *   if (typeof func === "function") {
- *     func[Symbol.for("functionless:BoundThis")] = self;
- *     func[Symbol.for("functionless:BoundArgs")] = args;
- *     func[Symbol.for("functionless:TargetFunction")] = func;
- *   }
- *   return tmp;
- * }
- * ```
- *
- * All CallExpressions with the shape <expr>.bind(...<args>) are re-written as calls
- * to this special function which intercepts the call.
- * ```ts
- * <expr>.bind(...<args>)
- * // =>
- * bind_8269d1a8(<expr>, ...<args>)
- * ```
- *
- * If `<expr>` is a Function, then the values of BoundThis, BoundArgs and TargetFunction
- * are added to the bound Function.
- *
- * If `<expr>` is not a Function, then the call is proxied without modification.
- */
-const BIND_FUNCTION_NAME: &str = "bind_8269d1a8";
 
 const GLOBAL_THIS_NAME: &str = "global_8269d1a8";
 
@@ -103,10 +73,6 @@ pub struct ClosureDecorator<'a> {
    */
   pub stash: Ident,
   /**
-   * An Identifier referencing the `bind` interceptor function injected into all processed modules.
-   */
-  pub bind: Ident,
-  /**
    * An Identifier referencing the `proxy` interceptor function injected into all processed modules.
    */
   pub proxy: Ident,
@@ -132,7 +98,6 @@ impl<'a> ClosureDecorator<'a> {
       vm: VirtualMachine::new(),
       global: private_ident!(GLOBAL_THIS_NAME),
       stash: private_ident!(STASH_NAME),
-      bind: private_ident!(BIND_FUNCTION_NAME),
       proxy: private_ident!(PROXY_FUNCTION_NAME),
       util: private_ident!(UTIL_FUNCTION_NAME),
       ids: 0,
@@ -159,7 +124,6 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
       }))),
       ModuleItem::Stmt(Stmt::Decl(self.create_global_this())),
       ModuleItem::Stmt(Stmt::Decl(self.create_import_util())),
-      ModuleItem::Stmt(Stmt::Decl(self.create_bind_interceptor())),
       ModuleItem::Stmt(Stmt::Decl(self.create_proxy_interceptor())),
     ]
     .into_iter()
@@ -225,49 +189,6 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
 
   fn visit_mut_class_expr(&mut self, class_expr: &mut ClassExpr) {
     self.visit_mut_class_like(class_expr);
-  }
-
-  fn visit_mut_call_expr(&mut self, call: &mut CallExpr) {
-    // detect if this looks like a call to Function.bind
-    // e.g. `foo.bind(self)`
-    // in general: `<expr>.bind(...<args>)`
-    let maybe_bind_expr = match &mut call.callee {
-      Callee::Expr(expr) => match expr.as_mut() {
-        Expr::Member(member) => match &member.prop {
-          MemberProp::Ident(ident) if &ident.sym == "bind" => Some(member.obj.as_mut()),
-          _ => None,
-        },
-        _ => None,
-      },
-      _ => None,
-    };
-
-    if maybe_bind_expr.is_some() {
-      let expr = maybe_bind_expr.unwrap();
-
-      let args = iter::once(ExprOrSpread {
-        expr: Box::new(expr.take()),
-        spread: None,
-      })
-      .chain(call.args.iter_mut().map(|arg| ExprOrSpread {
-        spread: None,
-        expr: arg.expr.take(),
-      }))
-      .collect();
-
-      // replace the CallExpr with a call to the `bind` interceptor function
-      // foo.bind(bar)
-      // =>
-      // bind(foo, bar);
-      *call = CallExpr {
-        callee: Callee::Expr(Box::new(Expr::Ident(self.bind.clone()))),
-        span: call.span.clone(),
-        type_args: None,
-        args,
-      }
-    }
-
-    call.visit_mut_children_with(self);
   }
 
   fn visit_mut_prop(&mut self, prop: &mut Prop) {
@@ -369,6 +290,36 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
             type_args: None,
             args: args,
           });
+        }
+
+        expr.visit_mut_children_with(self);
+      }
+      Expr::Call(call) => {
+        let maybe_bind_expr = match &mut call.callee {
+          Callee::Expr(expr) => match expr.as_mut() {
+            Expr::Member(member) => match member {
+              MemberExpr { obj, prop, .. } => match prop {
+                MemberProp::Ident(ident) if &ident.sym == "bind" => obj
+                  .as_member()
+                  .and_then(|mem| mem.obj.as_ident())
+                  .filter(|ident| ident.sym.to_string() == STASH_NAME)
+                  .map_or(Some(obj.clone()), |_| None),
+                _ => None,
+              },
+            },
+            _ => None,
+          },
+          _ => None,
+        };
+
+        if maybe_bind_expr.is_some() {
+          let func = maybe_bind_expr.unwrap();
+
+          // replace the CallExpr with a call to the `bind` interceptor function
+          // foo.bind(bar)
+          // =>
+          // ("BIND", ...);
+          *expr = self.update_bind(func, call.args[0].expr.clone(), call.args[1..].to_vec())
         }
 
         expr.visit_mut_children_with(self);
@@ -650,7 +601,7 @@ impl<'a> ClosureDecorator<'a> {
     return Box::new(Expr::Seq(SeqExpr {
       span: DUMMY_SP,
       exprs: vec![
-        // "I_REGISTER"
+        // "REGISTER"
         Box::new(Expr::Assign(AssignExpr {
           left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
           op: AssignOp::Assign,
@@ -723,112 +674,161 @@ impl<'a> ClosureDecorator<'a> {
     }));
   }
 
-  fn create_bind_interceptor(&self) -> Decl {
-    let func = quote_ident!("func");
-    let this = quote_ident!("self");
-    let args = quote_ident!("args");
-    let f = quote_ident!("f");
-    Decl::Fn(FnDecl {
-      declare: false,
-      ident: self.bind.clone(),
-      function: Function {
-        params: vec![
-          param(func.clone(), false),
-          param(this.clone(), false),
-          param(args.clone(), true),
-        ],
-        decorators: vec![],
-        span: DUMMY_SP,
-        body: Some(BlockStmt {
+  /**
+   * ("BIND",
+   *    stash={ args: args, self: this, func: func },
+   *    stash={ f: stash.func.bind(stash.self, ...stash.args), ...stash },
+   *    typeof stash.f === "function" && (
+   *        stash.f[Symbol.for("functionless:BoundThis")] = stash.self,
+   *        stash.f[Symbol.for("functionless:BoundArgs")] = stash.args,
+   *        stash.f[Symbol.for("functionless:TargetFunction")] = stash.func
+   *    ),
+   *    stash
+   * )
+   */
+  fn update_bind(&self, func: Box<Expr>, this: Box<Expr>, args: Vec<ExprOrSpread>) -> Expr {
+    let member_f = Box::new(Expr::Member(MemberExpr {
+      span: DUMMY_SP,
+      obj: Box::new(Expr::Ident(self.stash.clone())),
+      prop: MemberProp::Ident(quote_ident!("f")),
+    }));
+    // the original function stored in stash
+    let member_func = Box::new(Expr::Member(MemberExpr {
+      span: DUMMY_SP,
+      obj: Box::new(Expr::Ident(self.stash.clone())),
+      prop: MemberProp::Ident(quote_ident!("func")),
+    }));
+    let member_args = Box::new(Expr::Member(MemberExpr {
+      span: DUMMY_SP,
+      obj: Box::new(Expr::Ident(self.stash.clone())),
+      prop: MemberProp::Ident(quote_ident!("args")),
+    }));
+    //
+    let member_this = Box::new(Expr::Member(MemberExpr {
+      span: DUMMY_SP,
+      obj: Box::new(Expr::Ident(self.stash.clone())),
+      prop: MemberProp::Ident(quote_ident!("this")),
+    }));
+
+    return Expr::Seq(SeqExpr {
+      span: DUMMY_SP,
+      exprs: vec![
+        Box::new(Expr::Assign(AssignExpr {
+          left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+          op: AssignOp::Assign,
+          right: string_expr(BIND_FLAG),
           span: DUMMY_SP,
-          stmts: vec![
-            // const f = func.bind(self, ...args);
-            Stmt::Decl(Decl::Var(VarDecl {
-              declare: false,
-              kind: VarDeclKind::Const,
-              decls: vec![VarDeclarator {
-                definite: false,
-                span: DUMMY_SP,
-                name: Pat::Ident(BindingIdent {
-                  id: f.clone(),
-                  type_ann: None,
-                }),
-                init: Some(Box::new(Expr::Call(CallExpr {
+        })),
+        // stash={ args, self, func}
+        Box::new(Expr::Assign(AssignExpr {
+          span: DUMMY_SP,
+          left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+          op: AssignOp::Assign,
+          right: Box::new(Expr::Object(ObjectLit {
+            span: DUMMY_SP,
+            props: vec![
+              // args = [args]
+              PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key: PropName::Ident(quote_ident!("args")),
+                value: Box::new(Expr::Array(ArrayLit {
+                  span: DUMMY_SP,
+                  elems: args.into_iter().map(Some).collect(),
+                })),
+              }))),
+              // this = this
+              PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key: PropName::Ident(quote_ident!("this")),
+                value: this,
+              }))),
+              // func = func
+              PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key: PropName::Ident(quote_ident!("func")),
+                value: func,
+              }))),
+            ],
+          })),
+        })),
+        // stash = { f: stash.func.bind(stash.this, stash.args), ...stash }
+        Box::new(Expr::Assign(AssignExpr {
+          span: DUMMY_SP,
+          left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+          op: AssignOp::Assign,
+          right: Box::new(Expr::Object(ObjectLit {
+            span: DUMMY_SP,
+            props: vec![
+              PropOrSpread::Prop(Box::new(Prop::KeyValue(KeyValueProp {
+                key: PropName::Ident(quote_ident!("f")),
+                value: Box::new(Expr::Call(CallExpr {
                   span: DUMMY_SP,
                   type_args: None,
                   callee: Callee::Expr(Box::new(Expr::Member(MemberExpr {
-                    obj: Box::new(Expr::Ident(func.clone())),
+                    obj: member_func.clone(),
                     prop: MemberProp::Ident(quote_ident!("bind")),
                     span: DUMMY_SP,
                   }))),
                   args: vec![
                     ExprOrSpread {
-                      expr: Box::new(Expr::Ident(this.clone())),
+                      expr: member_this.clone(),
                       spread: None,
                     },
+                    // ...stash.args
                     ExprOrSpread {
-                      expr: Box::new(Expr::Ident(args.clone())),
+                      expr: member_args.clone(),
                       spread: Some(DUMMY_SP),
                     },
                   ],
-                }))),
-              }],
-              span: DUMMY_SP,
-            })),
-            // if(typeof func === "function")
-            Stmt::If(IfStmt {
-              span: DUMMY_SP,
-              test: Box::new(Expr::Bin(BinExpr {
-                span: DUMMY_SP,
-                left: Box::new(Expr::Unary(UnaryExpr {
-                  arg: Box::new(Expr::Ident(func.clone())),
-                  span: DUMMY_SP,
-                  op: UnaryOp::TypeOf,
                 })),
-                op: BinaryOp::EqEqEq,
-                right: Box::new(Expr::Lit(Lit::Str(Str {
-                  raw: None,
-                  span: DUMMY_SP,
-                  value: JsWord::from("function"),
-                }))),
-              })),
-              alt: None,
-              cons: Box::new(Stmt::Block(BlockStmt {
-                span: DUMMY_SP,
-                stmts: vec![
-                  // f[Symbol.for("functionless:BoundThis")] = self;
-                  // f[Symbol.for("functionless:BoundArgs")] = args;
-                  // f[Symbol.for("functionless:TargetFunction")] = func;
-                  self.set_symbol(
-                    Box::new(Expr::Ident(f.clone())),
-                    "functionless:BoundThis",
-                    Box::new(Expr::Ident(this.clone())),
-                  ),
-                  self.set_symbol(
-                    Box::new(Expr::Ident(f.clone())),
-                    "functionless:BoundArgs",
-                    Box::new(Expr::Ident(args.clone())),
-                  ),
-                  self.set_symbol(
-                    Box::new(Expr::Ident(f.clone())),
-                    "functionless:TargetFunction",
-                    Box::new(Expr::Ident(func.clone())),
-                  ),
-                ],
-              })),
-            }),
-            Stmt::Return(ReturnStmt {
+              }))),
+              // ...stash
+              PropOrSpread::Spread(SpreadElement {
+                dot3_token: DUMMY_SP,
+                expr: Box::new(Expr::Ident(self.stash.clone())),
+              }),
+            ],
+          })),
+        })),
+        // typeof stash.f === "function" && (stash.f[]=..., stash.f[]=..., stash.f[]=...)
+        Box::new(Expr::Bin(BinExpr {
+          span: DUMMY_SP,
+          op: BinaryOp::LogicalAnd,
+          left: Box::new(Expr::Bin(BinExpr {
+            span: DUMMY_SP,
+            left: Box::new(Expr::Unary(UnaryExpr {
+              arg: member_f.clone(),
               span: DUMMY_SP,
-              arg: Some(Box::new(Expr::Ident(f.clone()))),
-            }),
-          ],
-        }),
-        is_generator: false,
-        is_async: false,
-        type_params: None,
-        return_type: None,
-      },
-    })
+              op: UnaryOp::TypeOf,
+            })),
+            op: BinaryOp::EqEqEq,
+            right: Box::new(Expr::Lit(Lit::Str(quote_str!("function")))),
+          })),
+          right: Box::new(Expr::Seq(SeqExpr {
+            span: DUMMY_SP,
+            exprs: vec![
+              // stash.f["functionless:BoundThis"] = stash.this;
+              Box::new(self.set_symbol_expr(
+                member_f.clone(),
+                "functionless:BoundThis",
+                member_this.clone(),
+              )),
+              // stash.f["functionless:BoundArgs"] = stash.args;
+              Box::new(self.set_symbol_expr(
+                member_f.clone(),
+                "functionless:BoundArgs",
+                member_args.clone(),
+              )),
+              // stash.f["functionless:TargetFunction"] = stash.func;
+              Box::new(self.set_symbol_expr(
+                member_f.clone(),
+                "functionless:TargetFunction",
+                member_func.clone(),
+              )),
+            ],
+          })),
+        })),
+        // return stash.f
+        member_f.clone(),
+      ],
+    });
   }
 
   fn create_proxy_interceptor(&self) -> Decl {
@@ -990,13 +990,6 @@ impl<'a> ClosureDecorator<'a> {
       op: AssignOp::Assign,
       right: to.clone(),
       span: DUMMY_SP,
-    })
-  }
-
-  fn set_symbol(&self, on: Box<Expr>, sym: &str, to: Box<Expr>) -> Stmt {
-    Stmt::Expr(ExprStmt {
-      span: DUMMY_SP,
-      expr: Box::new(self.set_symbol_expr(on, sym, to)),
     })
   }
 
