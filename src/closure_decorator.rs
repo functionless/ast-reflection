@@ -10,26 +10,26 @@ use swc_core::visit::*;
 
 use crate::class_like::ClassLike;
 use crate::js_util::{
-  ident_expr, prop_access_expr, ref_expr, require_expr, string_expr, this_expr,
+  ident_expr, prop_access_expr, ref_expr, require_expr, string_expr, this_expr, undefined_expr,
 };
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
 
 /**
- * Name of the `register` function that is injected into all compiled source files.
+ * Flags used to identify the Functionless AST association sequences.
  *
- * ```ts
- * function register_8269d1a8(func, ast) {
- *   func[Symbol.for("functionless:AST")] = ast;
- *   return func;
- * }
- * ```
- *
- * All Function Declarations, Expressions and Arrow Expressions are decorated with
- * the `register` function which attaches its AST as a property.
+ * These can be used by downstream programs to discover and manipulate the injects
+ * functionless assignment sequences.
  */
-const REGISTER_FUNCTION_NAME: &str = "register_8269d1a8";
+// (REGISTER,stash=func,stash[]=ast,stash)
+const REGISTER_FLAG: &str = "REGISTER_8269d1a8";
+// (REGISTER_REF,stash[]=ast)
+const REGISTER_REF_FLAG: &str = "REGISTER_REF_8269d1a8";
+// // (stash=BIND, ... todo)
+// const BIND_FLAG: &str = "BIND_8269d1a8";
+// // (stash=PROXY, ... todo)
+// const PROXY_FLAG: &str = "PROXY_8269d1a8";
 
 /**
  * Name of the `bind` function that is injected into all compiled source files.
@@ -63,6 +63,24 @@ const BIND_FUNCTION_NAME: &str = "bind_8269d1a8";
 
 const GLOBAL_THIS_NAME: &str = "global_8269d1a8";
 
+/**
+ * A unique variable used to story temporary values like registering functions with their AST.
+ *
+ * Example:
+ * ```ts
+ * const func = () => {};
+ * ```
+ *
+ * becomes:
+ *
+ * ```ts
+ * let stash;
+ *
+ * const func = (stash = () => {}, stash[Symbol.for(...)] = ast, stash);
+ * ```
+ */
+const STASH_NAME: &str = "stash_8269d1a8";
+
 const PROXY_FUNCTION_NAME: &str = "proxy_8269d1a8";
 
 const UTIL_FUNCTION_NAME: &str = "util_8269d1a8";
@@ -81,9 +99,9 @@ pub struct ClosureDecorator<'a> {
    */
   pub global: Ident,
   /**
-   * An Identifier referencing the `register` interceptor function injected into all processed modules.
+   * A unique identifier functionless uses to story temporary values for registration.
    */
-  pub register: Ident,
+  pub stash: Ident,
   /**
    * An Identifier referencing the `bind` interceptor function injected into all processed modules.
    */
@@ -113,7 +131,7 @@ impl<'a> ClosureDecorator<'a> {
       source_map,
       vm: VirtualMachine::new(),
       global: private_ident!(GLOBAL_THIS_NAME),
-      register: private_ident!(REGISTER_FUNCTION_NAME),
+      stash: private_ident!(STASH_NAME),
       bind: private_ident!(BIND_FUNCTION_NAME),
       proxy: private_ident!(PROXY_FUNCTION_NAME),
       util: private_ident!(UTIL_FUNCTION_NAME),
@@ -125,16 +143,29 @@ impl<'a> ClosureDecorator<'a> {
 impl<'a> VisitMut for ClosureDecorator<'a> {
   fn visit_mut_module_items(&mut self, items: &mut Vec<ModuleItem>) {
     let new_stmts: Vec<ModuleItem> = [
+      ModuleItem::Stmt(Stmt::Decl(Decl::Var(VarDecl {
+        span: DUMMY_SP,
+        declare: false,
+        decls: vec![VarDeclarator {
+          definite: false,
+          name: Pat::Ident(BindingIdent {
+            id: self.stash.clone(),
+            type_ann: None,
+          }),
+          init: None,
+          span: DUMMY_SP,
+        }],
+        kind: VarDeclKind::Let,
+      }))),
       ModuleItem::Stmt(Stmt::Decl(self.create_global_this())),
       ModuleItem::Stmt(Stmt::Decl(self.create_import_util())),
-      ModuleItem::Stmt(Stmt::Decl(self.create_register_interceptor())),
       ModuleItem::Stmt(Stmt::Decl(self.create_bind_interceptor())),
       ModuleItem::Stmt(Stmt::Decl(self.create_proxy_interceptor())),
     ]
     .into_iter()
     .chain(
-      // discover all function declarations in the module and create a
-      // CallExpr to `register` that decorates each function with its AST.
+      // discover all function declarations in the module and
+      // add the expressions to `register` function with its AST.
       items
         .iter()
         .filter_map(|item| match item {
@@ -159,11 +190,21 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
     // prepend the `register` and `bind` function declarations
     // and the `register` calls into the top of every module.
     prepend_stmts(items, new_stmts.into_iter());
+
+    items.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
+      expr: Box::new(Expr::Assign(AssignExpr {
+        span: DUMMY_SP,
+        op: AssignOp::Assign,
+        left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+        right: undefined_expr(),
+      })),
+      span: DUMMY_SP,
+    })))
   }
 
   fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
     // discover all function declarations in the block and create a
-    // CallExpr to `register` that decorates each function with its AST.
+    // add the expressions to `register` function with its AST.
     let register_stmts: Vec<Stmt> = stmts
       .iter()
       .filter_map(|stmt| self.register_stmt_if_func_decl(stmt))
@@ -253,7 +294,7 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
 
         *prop = Prop::KeyValue(KeyValueProp {
           key: method.key.take(),
-          value: self.register_ast(func, ast),
+          value: self.register_inline_ast_seq(func, ast),
         });
       }
       _ => {
@@ -269,14 +310,10 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
 
         arrow.visit_mut_children_with(self);
 
-        // replace the arrow function with a call to the `register` interceptor function
-        // that decorates the function with its AST
+        // replace the arrow function with the expressions which associate the function to it's AST
         // () => {..}
         // =>
-        // register(
-        //   () => {..}, // original arrow
-        //   () => [..], // function that produces the arrow's AST
-        // )
+        // (stash = () => {...}, stash[Symbol.for("ast")] = () => [..], stash)
         *expr = *self.register_mut_ast(&mut Expr::Arrow(arrow.take()), ast);
       }
       Expr::Fn(func) if func.function.body.is_some() => {
@@ -514,40 +551,13 @@ impl<'a> ClosureDecorator<'a> {
 
   fn register_ast_stmt(&self, expr: Box<Expr>, ast: Box<Expr>) -> Stmt {
     Stmt::Expr(ExprStmt {
-      expr: self.register_ast(expr, ast),
+      expr: self.register_ref_ast_seq(expr, ast),
       span: DUMMY_SP,
     })
   }
 
   fn register_mut_ast(&self, func: &mut Expr, ast: Box<Expr>) -> Box<Expr> {
-    self.register_ast(Box::new(func.take()), ast)
-  }
-
-  fn register_ast(&self, func: Box<Expr>, ast: Box<Expr>) -> Box<Expr> {
-    Box::new(Expr::Call(CallExpr {
-      span: DUMMY_SP,
-      type_args: None,
-      // register(() =>  { .. }, () => new FunctionDecl([..]))
-      callee: Callee::Expr(Box::new(Expr::Ident(self.register.clone()))),
-      args: vec![
-        ExprOrSpread {
-          expr: func,
-          spread: None,
-        },
-        ExprOrSpread {
-          expr: Box::new(Expr::Arrow(ArrowExpr {
-            is_async: false,
-            is_generator: false,
-            return_type: None,
-            params: vec![],
-            span: DUMMY_SP,
-            type_params: None,
-            body: BlockStmtOrExpr::Expr(ast),
-          })),
-          spread: None,
-        },
-      ],
-    }))
+    self.register_inline_ast_seq(Box::new(func.take()), ast)
   }
 
   /**
@@ -573,7 +583,18 @@ impl<'a> ClosureDecorator<'a> {
             span: DUMMY_SP,
             type_args: None,
             callee: Callee::Expr(prop_access_expr(
-              ident_expr(self.register.clone()),
+              Box::new(Expr::Arrow(ArrowExpr {
+                is_async: false,
+                is_generator: false,
+                return_type: None,
+                params: vec![],
+                span: DUMMY_SP,
+                type_params: None,
+                body: BlockStmtOrExpr::BlockStmt(BlockStmt {
+                  span: DUMMY_SP,
+                  stmts: vec![],
+                }),
+              })),
               quote_ident!("constructor"),
             )),
             args: vec![ExprOrSpread {
@@ -612,32 +633,94 @@ impl<'a> ClosureDecorator<'a> {
     })
   }
 
-  fn create_register_interceptor(&self) -> Decl {
-    let func = quote_ident!("func");
-    let ast = quote_ident!("ast");
-    Decl::Fn(FnDecl {
-      declare: false,
-      ident: self.register.clone(),
-      function: Function {
-        params: vec![param(func.clone(), false), param(ast.clone(), false)],
-        decorators: vec![],
-        span: DUMMY_SP,
-        body: Some(BlockStmt {
+  /**
+   * Registers a function or object with it's AST and returns a reference to it's value using the stash variable.
+   *
+   * ```ts
+   * const x = () => {}
+   * ```
+   *
+   * becomes
+   *
+   * ```ts
+   * ("REGISTER", stash = () => {}, stash[Symbol.from(functionless::AST)] = ast, stash)
+   * ```
+   */
+  fn register_inline_ast_seq(&self, func: Box<Expr>, ast: Box<Expr>) -> Box<Expr> {
+    return Box::new(Expr::Seq(SeqExpr {
+      span: DUMMY_SP,
+      exprs: vec![
+        // "I_REGISTER"
+        Box::new(Expr::Assign(AssignExpr {
+          left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+          op: AssignOp::Assign,
+          right: string_expr(REGISTER_FLAG),
           span: DUMMY_SP,
-          stmts: vec![
-            self.set_symbol(func.clone(), "functionless:AST", ast.clone()),
-            Stmt::Return(ReturnStmt {
-              span: DUMMY_SP,
-              arg: Some(Box::new(Expr::Ident(func.clone()))),
-            }),
-          ],
-        }),
-        is_generator: false,
-        is_async: false,
-        type_params: None,
-        return_type: None,
-      },
-    })
+        })),
+        // stash=func
+        Box::new(Expr::Assign(AssignExpr {
+          left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+          op: AssignOp::Assign,
+          right: func,
+          span: DUMMY_SP,
+        })),
+        // stash[Symbol.from(functionless::AST)] = ast
+        Box::new(self.set_symbol_expr(
+          Box::new(Expr::Ident(self.stash.clone())),
+          "functionless:AST",
+          // is this right?
+          Box::new(Expr::Arrow(ArrowExpr {
+            is_async: false,
+            is_generator: false,
+            return_type: None,
+            params: vec![],
+            span: DUMMY_SP,
+            type_params: None,
+            body: BlockStmtOrExpr::Expr(ast),
+          })),
+        )),
+        // stash
+        Box::new(Expr::Ident(self.stash.clone())),
+      ],
+    }));
+  }
+
+  /**
+   * Registers an identifier with it's AST.
+   *
+   * (stash=REGISTER_REF,x[Symbol.for(AST)]=ast)
+   * function x() {
+   *    ....
+   * }
+   */
+  fn register_ref_ast_seq(&self, expr: Box<Expr>, ast: Box<Expr>) -> Box<Expr> {
+    return Box::new(Expr::Seq(SeqExpr {
+      span: DUMMY_SP,
+      exprs: vec![
+        // "REGISTER"
+        Box::new(Expr::Assign(AssignExpr {
+          left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
+          op: AssignOp::Assign,
+          right: string_expr(REGISTER_REF_FLAG),
+          span: DUMMY_SP,
+        })),
+        // stash[Symbol.from(functionless::AST)] = ast
+        Box::new(self.set_symbol_expr(
+          expr,
+          "functionless:AST",
+          // is this right?
+          Box::new(Expr::Arrow(ArrowExpr {
+            is_async: false,
+            is_generator: false,
+            return_type: None,
+            params: vec![],
+            span: DUMMY_SP,
+            type_params: None,
+            body: BlockStmtOrExpr::Expr(ast),
+          })),
+        )),
+      ],
+    }));
   }
 
   fn create_bind_interceptor(&self) -> Decl {
@@ -716,9 +799,21 @@ impl<'a> ClosureDecorator<'a> {
                   // f[Symbol.for("functionless:BoundThis")] = self;
                   // f[Symbol.for("functionless:BoundArgs")] = args;
                   // f[Symbol.for("functionless:TargetFunction")] = func;
-                  self.set_symbol(f.clone(), "functionless:BoundThis", this.clone()),
-                  self.set_symbol(f.clone(), "functionless:BoundArgs", args.clone()),
-                  self.set_symbol(f.clone(), "functionless:TargetFunction", func.clone()),
+                  self.set_symbol(
+                    Box::new(Expr::Ident(f.clone())),
+                    "functionless:BoundThis",
+                    Box::new(Expr::Ident(this.clone())),
+                  ),
+                  self.set_symbol(
+                    Box::new(Expr::Ident(f.clone())),
+                    "functionless:BoundArgs",
+                    Box::new(Expr::Ident(args.clone())),
+                  ),
+                  self.set_symbol(
+                    Box::new(Expr::Ident(f.clone())),
+                    "functionless:TargetFunction",
+                    Box::new(Expr::Ident(func.clone())),
+                  ),
                 ],
               })),
             }),
@@ -881,23 +976,27 @@ impl<'a> ClosureDecorator<'a> {
     })
   }
 
-  fn set_symbol(&self, on: Ident, sym: &str, to: Ident) -> Stmt {
+  fn set_symbol_expr(&self, on: Box<Expr>, sym: &str, to: Box<Expr>) -> Expr {
+    Expr::Assign(AssignExpr {
+      // func[Symbol.for("functionless:AST")] = ast
+      left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
+        obj: on,
+        span: DUMMY_SP,
+        prop: MemberProp::Computed(ComputedPropName {
+          span: DUMMY_SP,
+          expr: self.symbol_for(sym),
+        }),
+      }))),
+      op: AssignOp::Assign,
+      right: to.clone(),
+      span: DUMMY_SP,
+    })
+  }
+
+  fn set_symbol(&self, on: Box<Expr>, sym: &str, to: Box<Expr>) -> Stmt {
     Stmt::Expr(ExprStmt {
       span: DUMMY_SP,
-      expr: Box::new(Expr::Assign(AssignExpr {
-        // func[Symbol.for("functionless:AST")] = ast
-        left: PatOrExpr::Expr(Box::new(Expr::Member(MemberExpr {
-          obj: Box::new(Expr::Ident(on.clone())),
-          span: DUMMY_SP,
-          prop: MemberProp::Computed(ComputedPropName {
-            span: DUMMY_SP,
-            expr: self.symbol_for(sym),
-          }),
-        }))),
-        op: AssignOp::Assign,
-        right: Box::new(Expr::Ident(to.clone())),
-        span: DUMMY_SP,
-      })),
+      expr: Box::new(self.set_symbol_expr(on, sym, to)),
     })
   }
 
