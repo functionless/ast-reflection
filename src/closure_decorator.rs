@@ -9,9 +9,7 @@ use swc_core::utils::{prepend_stmts, private_ident, quote_ident, quote_str};
 use swc_core::visit::*;
 
 use crate::class_like::ClassLike;
-use crate::js_util::{
-  prop_access_expr, ref_expr, require_expr, string_expr, this_expr, undefined_expr,
-};
+use crate::js_util::{prop_access_expr, ref_expr, require_expr, string_expr, this_expr};
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
@@ -146,16 +144,6 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
     // prepend the `register` and `bind` function declarations
     // and the `register` calls into the top of every module.
     prepend_stmts(items, new_stmts.into_iter());
-
-    items.push(ModuleItem::Stmt(Stmt::Expr(ExprStmt {
-      expr: Box::new(Expr::Assign(AssignExpr {
-        span: DUMMY_SP,
-        op: AssignOp::Assign,
-        left: PatOrExpr::Expr(Box::new(Expr::Ident(self.stash.clone()))),
-        right: undefined_expr(),
-      })),
-      span: DUMMY_SP,
-    })))
   }
 
   fn visit_mut_stmts(&mut self, stmts: &mut Vec<Stmt>) {
@@ -207,7 +195,7 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
 
         *prop = Prop::KeyValue(KeyValueProp {
           key: method.key.take(),
-          value: self.register_inline_ast_seq(func, ast),
+          value: self.register_ast_seq(func, ast),
         });
       }
       _ => {
@@ -226,7 +214,7 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
         // replace the arrow function with the expressions which associate the function to it's AST
         // () => {..}
         // =>
-        // (stash = () => {...}, stash[Symbol.for("ast")] = () => [..], stash)
+        // ("REGISTER", stash = () => {...}, stash[Symbol.for("AST")] = ast, stash)
         *expr = *self.register_mut_ast(&mut Expr::Arrow(arrow.take()), ast);
       }
       Expr::Fn(func) if func.function.body.is_some() => {
@@ -238,10 +226,7 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
         // that decorates the function with its AST
         // function foo() {..}
         // =>
-        // register(
-        //   function foo() {..}, // original function expression
-        //   () => [..], // function that produces the function expression's AST
-        // )
+        // ("REGISTER", stash = function foo() {..}, stash[Symbol.for("AST")] = ast, stash)
         *expr = *self.register_mut_ast(&mut Expr::Fn(func.take()), ast);
       }
       Expr::New(NewExpr { args, callee, .. }) if args.is_some() => {
@@ -256,23 +241,16 @@ impl<'a> VisitMut for ClosureDecorator<'a> {
             .iter_mut()
             .for_each(|arg| arg.visit_mut_children_with(self));
 
-          let args = args
-            .as_mut()
-            .unwrap()
-            .iter_mut()
-            .map(|arg| ExprOrSpread {
-              spread: None,
-              expr: arg.expr.take(),
-            })
-            .collect();
-
           proxy_class.visit_mut_children_with(self);
 
           // replace the NewExpr with a call to the `bind` interceptor function
           // new Proxy({}, {})
           // =>
           // ("PROXY", ...)
-          *expr = self.wrap_proxy(Box::new(proxy_class.take()), args);
+          *expr = self.wrap_proxy(
+            Box::new(proxy_class.take()),
+            args.take().unwrap_or_default(),
+          );
         } else {
           expr.visit_mut_children_with(self)
         }
@@ -502,7 +480,7 @@ impl<'a> ClosureDecorator<'a> {
   }
 
   fn register_mut_ast(&self, func: &mut Expr, ast: Box<Expr>) -> Box<Expr> {
-    self.register_inline_ast_seq(Box::new(func.take()), ast)
+    self.register_ast_seq(Box::new(func.take()), ast)
   }
 
   /**
@@ -591,7 +569,7 @@ impl<'a> ClosureDecorator<'a> {
    * ("REGISTER", stash = () => {}, stash[Symbol.from(functionless::AST)] = ast, stash)
    * ```
    */
-  fn register_inline_ast_seq(&self, func: Box<Expr>, ast: Box<Expr>) -> Box<Expr> {
+  fn register_ast_seq(&self, func: Box<Expr>, ast: Box<Expr>) -> Box<Expr> {
     return Box::new(Expr::Seq(SeqExpr {
       span: DUMMY_SP,
       exprs: vec![
@@ -829,10 +807,9 @@ impl<'a> ClosureDecorator<'a> {
    * ("PROXY",
    *    stash={ args }, // ensure the args are only evaluated once
    *    stash={ proxy: new clss(...stash.args), ...stash }, // create the proxy
-   *    globalThis.util.types.isProxy(stash.proxy) && (
-   *       globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap(),
-   *       proxyMap.set(stash.proxy, stash.args)
-   *    ),
+   *    (globalThis.util.types.isProxy(stash.proxy) && (
+   *       globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap()
+   *    ).set(stash.proxy, stash.args)
    *    proxy
    * )
    */
