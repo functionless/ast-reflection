@@ -98,7 +98,7 @@ impl<'a> ClosureDecorator<'a> {
                       Node::ParameterDecl,
                       &p.span,
                       vec![
-                        self.parse_pat(i.left.as_ref()),
+                        self.parse_pat(i.left.as_ref(), false),
                         self.parse_expr(i.right.as_ref()),
                       ],
                     ),
@@ -394,17 +394,17 @@ impl<'a> ClosureDecorator<'a> {
       match pat {
         // foo(...a)
         Pat::Rest(rest) => vec![
-          self.parse_pat(rest.arg.as_ref()),
+          self.parse_pat(rest.arg.as_ref(), false),
           undefined_expr(),
           true_expr(),
         ],
         // foo(a = b)
         Pat::Assign(assign) => vec![
-          self.parse_pat(assign.left.as_ref()),
+          self.parse_pat(assign.left.as_ref(), false),
           self.parse_expr(assign.right.as_ref()),
           false_expr(),
         ],
-        pat => vec![self.parse_pat(pat), undefined_expr(), false_expr()],
+        pat => vec![self.parse_pat(pat, false), undefined_expr(), false_expr()],
       },
     )
   }
@@ -552,7 +552,7 @@ impl<'a> ClosureDecorator<'a> {
           }
           //  for (i in items)
           //       ^ not a new name, so no binding created
-          VarDeclOrPat::Pat(pat) => self.parse_pat(pat),
+          VarDeclOrPat::Pat(pat) => self.parse_pat(pat, true),
         };
 
         let node = new_node(
@@ -587,7 +587,7 @@ impl<'a> ClosureDecorator<'a> {
           }
           // for (i of items)
           //      ^ not a new name, so no binding created
-          VarDeclOrPat::Pat(pat) => self.parse_pat(pat),
+          VarDeclOrPat::Pat(pat) => self.parse_pat(pat, true),
         };
 
         let node = new_node(
@@ -729,9 +729,12 @@ impl<'a> ClosureDecorator<'a> {
                       get_pat_span(pat),
                       match pat {
                         Pat::Assign(assign) => {
-                          vec![self.parse_pat(&assign.left), self.parse_expr(&assign.right)]
+                          vec![
+                            self.parse_pat(&assign.left, false),
+                            self.parse_expr(&assign.right),
+                          ]
                         }
-                        _ => vec![self.parse_pat(pat)],
+                        _ => vec![self.parse_pat(pat, false)],
                       },
                     ),
                     None => undefined_expr(),
@@ -831,7 +834,7 @@ impl<'a> ClosureDecorator<'a> {
         vec![
           match &assign.left {
             PatOrExpr::Expr(expr) => self.parse_expr(expr),
-            PatOrExpr::Pat(pat) => self.parse_pat(pat),
+            PatOrExpr::Pat(pat) => self.parse_pat(pat, true),
           },
           string_expr(match assign.op {
             AssignOp::Assign => "=",
@@ -1485,7 +1488,7 @@ impl<'a> ClosureDecorator<'a> {
       Node::VariableDecl,
       &decl.span,
       vec![
-        self.parse_pat(&decl.name),
+        self.parse_pat(&decl.name, false),
         decl
           .init
           .as_ref()
@@ -1610,7 +1613,7 @@ impl<'a> ClosureDecorator<'a> {
     }
   }
 
-  fn parse_pat(&mut self, pat: &Pat) -> Box<Expr> {
+  fn parse_pat(&mut self, pat: &Pat, is_ref: bool) -> Box<Expr> {
     match pat {
       Pat::Array(array_binding) => new_node(
         self.source_map,
@@ -1625,13 +1628,13 @@ impl<'a> ClosureDecorator<'a> {
               Some(ExprOrSpread {
                 expr: match elem {
                   Some(pat) => match pat {
-                    Pat::Assign(_) => self.parse_pat(pat),
-                    Pat::Rest(_) => self.parse_pat(pat),
+                    Pat::Assign(_) => self.parse_pat(pat, is_ref),
+                    Pat::Rest(_) => self.parse_pat(pat, is_ref),
                     _ => new_node(
                       self.source_map,
                       Node::BindingElem,
                       get_pat_span(pat),
-                      vec![self.parse_pat(pat), false_expr()],
+                      vec![self.parse_pat(pat, is_ref), false_expr()],
                     ),
                   },
                   None => new_node(self.source_map, Node::OmittedExpr, &empty_span(), vec![]),
@@ -1680,8 +1683,8 @@ impl<'a> ClosureDecorator<'a> {
                       match kv.value.as_ref() {
                         // if this is an assign pattern, e.g. {key = value}
                         // then parse `key` as the `BindingElement.name` in FunctionlessAST
-                        Pat::Assign(assign) => self.parse_pat(assign.left.as_ref()),
-                        value => self.parse_pat(value),
+                        Pat::Assign(assign) => self.parse_pat(assign.left.as_ref(), is_ref),
+                        value => self.parse_pat(value, is_ref),
                       },
                       false_expr(),
                       self.parse_prop_name(&kv.key),
@@ -1698,7 +1701,7 @@ impl<'a> ClosureDecorator<'a> {
                     self.source_map,
                     Node::BindingElem,
                     &rest.span,
-                    vec![self.parse_pat(&rest.arg), true_expr()],
+                    vec![self.parse_pat(&rest.arg, is_ref), true_expr()],
                   ),
                 },
               })
@@ -1711,20 +1714,20 @@ impl<'a> ClosureDecorator<'a> {
         Node::BindingElem,
         &assign.span,
         vec![
-          self.parse_pat(assign.left.as_ref()),
+          self.parse_pat(assign.left.as_ref(), is_ref),
           false_expr(),
           undefined_expr(),
           self.parse_expr(assign.right.as_ref()),
         ],
       ),
       Pat::Expr(expr) => self.parse_expr(expr),
-      Pat::Ident(ident) => self.parse_ident(ident, false),
+      Pat::Ident(ident) => self.parse_ident(ident, is_ref),
       Pat::Invalid(invalid) => new_error_node(self.source_map, "Invalid Node", &invalid.span),
       Pat::Rest(rest) => new_node(
         self.source_map,
         Node::BindingElem,
         &rest.span,
-        vec![self.parse_pat(rest.arg.as_ref()), true_expr()],
+        vec![self.parse_pat(rest.arg.as_ref(), is_ref), true_expr()],
       ),
     }
   }

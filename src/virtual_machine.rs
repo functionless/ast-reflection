@@ -23,6 +23,10 @@ pub type Stack = Vec<Names>;
 
 impl VirtualMachine {
   pub fn is_id_visible(&self, ident: &Ident) -> bool {
+    // println!(
+    //   "is id visible {}",
+    //   serde_json::to_string(&ident.to_id()).unwrap_or_else(|_| ident.sym.to_string())
+    // );
     self.lookup_id(ident.to_id())
   }
 
@@ -84,6 +88,10 @@ impl VirtualMachine {
   }
 
   pub fn bind_id(&mut self, id: Id) {
+    // println!(
+    //   "register id {}",
+    //   serde_json::to_string(&id).unwrap_or_else(|_| id.0.to_string())
+    // );
     let names = self.stack.last_mut().expect("stack underflow");
     *names = names.update(id);
   }
