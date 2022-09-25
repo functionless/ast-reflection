@@ -20,14 +20,14 @@ use crate::virtual_machine::VirtualMachine;
  * These can be used by downstream programs to discover and manipulate the injects
  * functionless assignment sequences.
  */
-// (REGISTER,stash=func,stash[]=ast,stash)
-const REGISTER_FLAG: &str = "REGISTER_8269d1a8";
-// (REGISTER_REF,stash[]=ast)
-const REGISTER_REF_FLAG: &str = "REGISTER_REF_8269d1a8";
-// // (BIND, ...)
-const BIND_FLAG: &str = "BIND_8269d1a8";
-// // (PROXY, ...)
-const PROXY_FLAG: &str = "PROXY_8269d1a8";
+// (stash=REGISTER,stash=func,stash[]=ast,stash)
+const REGISTER_FLAG: &str = "REGISTER";
+// (stash=REGISTER_REF,stash[]=ast)
+const REGISTER_REF_FLAG: &str = "REGISTER_REF";
+// // (stash=BIND, ...)
+const BIND_FLAG: &str = "BIND";
+// // (stash=PROXY, ...)
+const PROXY_FLAG: &str = "PROXY";
 
 const GLOBAL_THIS_NAME: &str = "global_8269d1a8";
 
