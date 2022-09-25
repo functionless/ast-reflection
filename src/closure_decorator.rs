@@ -9,7 +9,9 @@ use swc_core::utils::{prepend_stmts, private_ident, quote_ident, quote_str};
 use swc_core::visit::*;
 
 use crate::class_like::ClassLike;
-use crate::js_util::{prop_access_expr, ref_expr, require_expr, string_expr, this_expr};
+use crate::js_util::{
+  ident_expr, prop_access_expr, ref_expr, require_expr, string_expr, this_expr,
+};
 use crate::prepend::prepend;
 use crate::span::{concat_span, get_prop_name_span};
 use crate::virtual_machine::VirtualMachine;
@@ -804,12 +806,13 @@ impl<'a> ClosureDecorator<'a> {
   }
 
   /**
-   * ("PROXY",
+   * (stash="PROXY",
    *    stash={ args }, // ensure the args are only evaluated once
    *    stash={ proxy: new clss(...stash.args), ...stash }, // create the proxy
-   *    (globalThis.util.types.isProxy(stash.proxy) && (
-   *       globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap()
-   *    ).set(stash.proxy, stash.args)
+   *    (globalThis.util.types.isProxy(stash.proxy) &&
+   *       (globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap())
+   *           .set(stash.proxy, stash.args)
+   *    ),
    *    proxy
    * )
    */
@@ -892,22 +895,24 @@ impl<'a> ClosureDecorator<'a> {
             ],
           })),
         })),
-        // (typeof stash.proxy === "function" &&
+        // (globalThis.util.types.isProxy(proxy) &&
         //       (globalThis.proxies = globalThis.proxies ?? new globalThis.WeakMap())
         //            .set(stash.proxy, stash.args), stash.proxy)
         Box::new(Expr::Bin(BinExpr {
           span: DUMMY_SP,
           op: BinaryOp::LogicalAnd,
-          // typeof stash.proxy === "function"
-          left: Box::new(Expr::Bin(BinExpr {
+          // globalThis.util.types.isProxy(proxy)
+          left: Box::new(Expr::Call(CallExpr {
+            type_args: None,
             span: DUMMY_SP,
-            left: Box::new(Expr::Unary(UnaryExpr {
-              arg: member_proxy.clone(),
-              span: DUMMY_SP,
-              op: UnaryOp::TypeOf,
-            })),
-            op: BinaryOp::EqEqEq,
-            right: Box::new(Expr::Lit(Lit::Str(quote_str!("function")))),
+            callee: Callee::Expr(prop_access_expr(
+              prop_access_expr(ident_expr(self.util.clone()), quote_ident!("types")),
+              quote_ident!("isProxy"),
+            )),
+            args: vec![ExprOrSpread {
+              expr: member_proxy.clone(),
+              spread: None,
+            }],
           })),
           right: Box::new(Expr::Call(CallExpr {
             span: DUMMY_SP,
