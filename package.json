@@ -18,13 +18,13 @@
     "projen": "npx projen"
   },
   "devDependencies": {
-    "@swc/core": "1.2.244",
+    "@swc/core": "1.2.247",
     "npm-check-updates": "^15",
-    "projen": "^0.61.4",
+    "projen": "^0.61.42",
     "standard-version": "^9"
   },
   "peerDependencies": {
-    "@swc/core": "^1.2.244"
+    "@swc/core": "^1.2.247"
   },
   "main": "ast_reflection.wasm",
   "license": "Apache-2.0",
